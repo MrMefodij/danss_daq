@@ -1,0 +1,57 @@
+{
+  "system": {
+    "poll_interval_sec": 300,
+    "eeprom_check_interval_sec": 86400,
+    "modbus_timeout_ms": 1000,
+    "response_timeout_ms": 500,
+    "max_retries": 3,
+    "retry_delay_ms": 100
+  },
+  "branches": [
+    {
+      "id": 0,
+      "device": "/dev/ttyUSB0",
+      "baud_rate": 19200,
+      "data_bits": 8,
+      "parity": "N",
+      "stop_bits": 1,
+      "boards": [
+        {
+          "address": 1,
+          "name": "PMT-01-01",
+          "enabled": true
+        },
+        {
+          "address": 2,
+          "name": "PMT-01-02",
+          "enabled": true
+        },
+        {
+          "address": 3,
+          "name": "PMT-01-03",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "device": "/dev/ttyUSB1",
+      "baud_rate": 19200,
+      "data_bits": 8,
+      "parity": "N",
+      "stop_bits": 1,
+      "boards": [
+        {
+          "address": 1,
+          "name": "PMT-02-01",
+          "enabled": true
+        },
+        {
+          "address": 2,
+          "name": "PMT-02-02",
+          "enabled": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "power_supply": {
+    "host": "d2pwr1.danss.local",
+    "port": 3000,
+    "poll_interval_sec": 300,
+    "connect_timeout_ms": 2000,
+    "response_timeout_ms": 1000,
+    "max_retries": 3,
+    "channels": [
+      {
+        "channel": 3,
+        "role": "CPU_POWER",
+        "name": "Electronics boards 6V",
+        "target_voltage_v": 6.0,
+        "current_limit_a": 3.0,
+        "ovp_limit_v": 6.5,
+        "ocp_limit_a": 3.2,
+        "ramp_step_v": 1.0,
+        "ramp_interval_ms": 500,
+        "require_interlock": false
+      },
+      {
+        "channel": 1,
+        "role": "SIPM_HV",
+        "name": "SiPM bias A",
+        "target_voltage_v": 55.0,
+        "current_limit_a": 0.5,
+        "ovp_limit_v": 57.0,
+        "ocp_limit_a": 0.7,
+        "ramp_step_v": 1.0,
+        "ramp_interval_ms": 1000,
+        "require_interlock": true
+      },
+      {
+        "channel": 2,
+        "role": "UNUSED",
+        "name": "spare",
+        "target_voltage_v": 0.0,
+        "current_limit_a": 0.0,
+        "ovp_limit_v": 0.0,
+        "ocp_limit_a": 0.0,
+        "ramp_step_v": 1.0,
+        "ramp_interval_ms": 1000,
+        "require_interlock": false
+      }
+    ]
+  }
+}
