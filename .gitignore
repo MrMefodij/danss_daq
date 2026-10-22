@@ -39,3 +39,44 @@
 
 # debug information files
 *.dwo
+
+# ---------------------------------------------------------------------------
+# Project-specific
+# ---------------------------------------------------------------------------
+
+# CMake build directories (CLion: cmake-build-*, command line: build*/)
+build/
+build-*/
+cmake-build-*/
+out/
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+_deps/
+compile_commands.json
+
+# Executables built by this project (in case they land outside build/)
+danss_frontend
+modbus_scanner
+test_owon_psu
+
+# Logs written at runtime (Logger -> danss_frontend.log)
+*.log
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# Python (tests/mock_*.py, config/generate_full_config.py)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store
