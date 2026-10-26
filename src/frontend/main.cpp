@@ -131,9 +131,9 @@ int main(int argc, char* argv[]) {
     
     // Setup logging
     if (verbose) {
-        Logger::instance().set_level(constants::LogLevel::DEBUG);
+        danss::log::set_level(constants::LogLevel::DEBUG);
     }
-    Logger::instance().set_log_file("danss_frontend.log");
+    danss::log::set_file("danss_frontend.log");
     
     LOG_INFO("DANSS Slow Control Frontend starting");
     

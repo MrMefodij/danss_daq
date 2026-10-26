@@ -2,6 +2,7 @@
 #define DANSS_LOGGER_H
 
 #include "common/constants.h"
+#include <atomic>
 #include <string>
 #include <mutex>
 #include <fstream>
@@ -27,7 +28,7 @@ public:
 private:
     Logger() = default;
     std::mutex mutex_;
-    constants::LogLevel level_ = constants::LogLevel::INFO;
+    std::atomic<constants::LogLevel> level_{constants::LogLevel::INFO};
     std::ofstream log_file_;
 };
 
@@ -37,6 +38,11 @@ private:
 #define LOG_WARNING(msg) danss::Logger::instance().warning(msg)
 #define LOG_ERROR(msg) danss::Logger::instance().error(msg)
 #define LOG_CRITICAL(msg) danss::Logger::instance().critical(msg)
+
+namespace log {
+inline void set_level(constants::LogLevel level) { Logger::instance().set_level(level); }
+inline void set_file(const std::string& filename) { Logger::instance().set_log_file(filename); }
+} // namespace log
 
 } // namespace danss
 

@@ -311,7 +311,7 @@ int main(int argc, char* argv[]) {
     std::cout << "\n";
     
     // Setup logger
-    Logger::instance().set_level(verbose ? constants::LogLevel::DEBUG : constants::LogLevel::INFO);
+    danss::log::set_level(verbose ? constants::LogLevel::DEBUG : constants::LogLevel::INFO);
     
     // Open Modbus connection
     ModbusRTU modbus(device, baud_rate);

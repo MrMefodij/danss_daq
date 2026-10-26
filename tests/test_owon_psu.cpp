@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
 
     std::printf("=== 1. Низкоуровневый OwonPSU: подключение и *IDN? ===\n");
     OwonPSU psu(host, port);
-    psu.set_timeout(2000);
+    psu.set_response_timeout(2000);
     check(psu.connect(), "connect() к " + host + ":" + std::to_string(port));
 
     std::string idn;

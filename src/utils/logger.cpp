@@ -2,6 +2,7 @@
 #include <iostream>
 #include <iomanip>
 #include <chrono>
+#include <cstdio>
 
 using namespace danss;
 
@@ -11,7 +12,6 @@ Logger& Logger::instance() {
 }
 
 void Logger::set_level(constants::LogLevel level) {
-    std::lock_guard<std::mutex> lock(mutex_);
     level_ = level;
 }
 
@@ -37,6 +37,8 @@ void Logger::log(constants::LogLevel level, const std::string& message) {
     // Format: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] message
     char time_buf[32];
     std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", std::localtime(&time_t));
+    char ms_buf[8];
+    std::snprintf(ms_buf, sizeof(ms_buf), "%03d", static_cast<int>(ms.count()));
     
     const char* level_str = "UNKNOWN";
     switch (level) {
@@ -48,7 +50,7 @@ void Logger::log(constants::LogLevel level, const std::string& message) {
     }
     
     std::string formatted = std::string("[") + time_buf + "." + 
-                           std::to_string(ms.count()) + "] [" + 
+                           ms_buf + "] [" + 
                            level_str + "] " + message;
     
     std::cout << formatted << std::endl;
