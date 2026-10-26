@@ -46,9 +46,11 @@ public:
     /// @brief Check if the socket is connected
     bool is_connected() const;
 
-    /// @brief Set response timeout (used for both connect and query wait)
-    void set_timeout(uint32_t timeout_ms);
-    uint32_t get_timeout() const { return timeout_ms_; }
+    /// @brief Set query response timeout (wait for the reply line)
+    void set_response_timeout(uint32_t timeout_ms);
+
+    /// @brief Set TCP connect timeout (default 2000 ms)
+    void set_connect_timeout(uint32_t timeout_ms);
 
     // =========================================================================
     // Identification / mode
@@ -67,8 +69,7 @@ public:
     // =========================================================================
 
     /// @brief INSTrument:NSELect <1|2|3> — select the active channel that the
-    /// single-channel setters/getters below operate on. Cached to avoid
-    /// redundant selects on repeated calls for the same channel.
+    /// single-channel setters/getters below operate on.
     /// @param channel Physical channel number (1-3)
     bool select_channel(uint8_t channel);
 
@@ -90,6 +91,10 @@ public:
 
     /// @brief OUTPut[:STATe] <0|1> — enable/disable the selected channel's output
     bool set_output(bool on);
+
+    /// @brief [SOURce:]VOLTage:LIMit? / CURRent:LIMit? — read back OVP / OCP threshold
+    bool get_voltage_protection(double& volts_out);
+    bool get_current_protection(double& amps_out);
 
     // =========================================================================
     // Measurements (operate on the currently selected channel unless noted)
@@ -129,7 +134,7 @@ public:
     void reset_statistics();
 
     /// @brief Get last error message
-    std::string get_last_error() const { return last_error_; }
+    std::string get_last_error() const;
 
 private:
     // =========================================================================
@@ -162,11 +167,11 @@ private:
 
     std::string host_;
     uint16_t port_;
-    uint32_t timeout_ms_;
-
-    int selected_channel_; ///< -1 = unknown/not yet selected
+    uint32_t response_timeout_ms_;
+    uint32_t connect_timeout_ms_;
 
     mutable std::mutex mutex_; // Thread safety
+    mutable std::mutex error_mutex_;
     std::string last_error_;
 
     Statistics stats_;

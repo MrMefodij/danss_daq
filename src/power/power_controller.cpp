@@ -13,9 +13,12 @@ PowerSupplyController::PowerSupplyController(const PSUConfig& config)
     : config_(config)
     , psu_(std::make_unique<OwonPSU>(config.host, config.port))
 {
-    psu_->set_timeout(config_.response_timeout_ms > 0
+    psu_->set_response_timeout(config_.response_timeout_ms > 0
         ? config_.response_timeout_ms
         : constants::DEFAULT_PSU_RESPONSE_TIMEOUT_MS);
+    psu_->set_connect_timeout(config_.connect_timeout_ms > 0
+        ? config_.connect_timeout_ms
+        : constants::DEFAULT_PSU_CONNECT_TIMEOUT_MS);
 }
 
 PowerSupplyController::~PowerSupplyController() {
@@ -30,7 +33,15 @@ bool PowerSupplyController::connect() {
         set_error("connect(): " + psu_->get_last_error());
         return false;
     }
+    if (!psu_->set_remote(true)) {
+        set_error("connect(): SYSTem:REMote failed: " + psu_->get_last_error());
+        return false;
+    }
     return true;
+}
+
+bool PowerSupplyController::ensure_connected() {
+    return psu_->is_connected() || connect();
 }
 
 void PowerSupplyController::disconnect() {
@@ -46,6 +57,10 @@ bool PowerSupplyController::is_connected() const {
 bool PowerSupplyController::apply_protection_limits() {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    protections_ok_ = false;
+    if (!ensure_connected()) {
+        return false;
+    }
     bool all_ok = true;
     for (const auto& ch : config_.channels) {
         if (ch.role == PSUChannelRole::UNUSED) {
@@ -72,10 +87,20 @@ bool PowerSupplyController::apply_protection_limits() {
                       + ": " + psu_->get_last_error());
             all_ok = false;
         }
+        double ovp = 0.0, ocp = 0.0;
+        if (!psu_->get_voltage_protection(ovp) || std::fabs(ovp - ch.ovp_limit_v) > 0.01
+            || !psu_->get_current_protection(ocp) || std::fabs(ocp - ch.ocp_limit_a) > 0.01) {
+            set_error("apply_protection_limits(): ch" + std::to_string(ch.channel)
+                      + " OVP/OCP not confirmed by the instrument (read back OVP="
+                      + std::to_string(ovp) + "V OCP=" + std::to_string(ocp) + "A)");
+            all_ok = false;
+            continue;
+        }
         LOG_INFO("PowerSupplyController: ch" + std::to_string(ch.channel) + " (" + ch.name
                  + ") protection set: OVP=" + std::to_string(ch.ovp_limit_v)
                  + "V OCP=" + std::to_string(ch.ocp_limit_a) + "A");
     }
+    protections_ok_ = all_ok;
     return all_ok;
 }
 
@@ -84,15 +109,27 @@ void PowerSupplyController::set_interlock_ready(bool ready) {
     if (was_ready && !ready) {
         LOG_WARNING("PowerSupplyController: interlock dropped — disabling interlocked channels");
         std::lock_guard<std::mutex> lock(mutex_);
+        ensure_connected();
         for (const auto& ch : config_.channels) {
             if (ch.require_interlock) {
-                if (psu_->select_channel(ch.channel)) {
-                    if (ch.role == PSUChannelRole::SIPM_HV) {
-                        double measured = 0.0;
-                        double from_v = psu_->measure_voltage(measured) ? measured : ch.target_voltage_v;
-                        ramp_voltage(ch.channel, from_v, 0.0, ch.ramp_step_v, ch.ramp_interval_ms);
+                if (!psu_->select_channel(ch.channel)) {
+                    set_error("interlock drop: could not select ch" + std::to_string(ch.channel)
+                              + ", output may still be ON: " + psu_->get_last_error());
+                    LOG_ERROR("PowerSupplyController: " + last_error_);
+                    continue;
+                }
+                if (ch.role == PSUChannelRole::SIPM_HV) {
+                    double measured = 0.0;
+                    double from_v = psu_->measure_voltage(measured) ? measured : ch.target_voltage_v;
+                    if (!ramp_voltage(ch.channel, from_v, 0.0, ch.ramp_step_v, ch.ramp_interval_ms)) {
+                        LOG_WARNING("PowerSupplyController: interlock drop: ramp-down for ch"
+                                    + std::to_string(ch.channel) + " did not complete — forcing output off");
                     }
-                    psu_->set_output(false);
+                }
+                if (!psu_->set_output(false)) {
+                    set_error("interlock drop: could not disable ch" + std::to_string(ch.channel)
+                              + ", output may still be ON: " + psu_->get_last_error());
+                    LOG_ERROR("PowerSupplyController: " + last_error_);
                 }
             }
         }
@@ -114,14 +151,19 @@ const PSUChannelConfig* PowerSupplyController::find_channel(uint8_t channel) con
 
 bool PowerSupplyController::ramp_voltage(uint8_t channel, double from_v, double to_v,
                                           double step_v, uint32_t interval_ms) {
-    (void)channel; // channel is assumed already selected by the caller
     if (step_v <= 0.0) {
         step_v = constants::DEFAULT_PSU_RAMP_STEP_V;
     }
+    const PSUChannelConfig* cfg = find_channel(channel);
+    bool interlocked = cfg && cfg->require_interlock;
     double current = from_v;
     double direction = (to_v >= current) ? 1.0 : -1.0;
 
     while (std::fabs(to_v - current) > 1e-6) {
+        if (abort_ramp_.load() || (direction > 0 && interlocked && !interlock_ready_.load())) {
+            set_error("ramp_voltage(): aborted at " + std::to_string(current) + "V");
+            return false;
+        }
         double next = current + direction * std::min(step_v, std::fabs(to_v - current));
         if (!psu_->set_voltage(next)) {
             set_error("ramp_voltage(): set_voltage failed at " + std::to_string(next)
@@ -150,25 +192,53 @@ bool PowerSupplyController::enable_channel(uint8_t channel) {
         LOG_WARNING("PowerSupplyController: " + last_error_);
         return false;
     }
+    if (!protections_ok_) {
+        set_error("enable_channel(): channel " + std::to_string(channel)
+                  + " refused — OVP/OCP not applied (call apply_protection_limits())");
+        return false;
+    }
+    if (!ensure_connected()) {
+        return false;
+    }
     if (!psu_->select_channel(channel)) {
         set_error("enable_channel(): select_channel failed: " + psu_->get_last_error());
         return false;
     }
 
     if (cfg->role == PSUChannelRole::SIPM_HV) {
-        // Safe start: force 0V before enabling the output, then ramp up.
-        if (!psu_->set_voltage(0.0)) {
-            set_error("enable_channel(): could not zero ch" + std::to_string(channel)
-                      + " before enabling: " + psu_->get_last_error());
+        std::array<bool, 3> on{};
+        if (!psu_->get_all_output_states(on)) {
+            set_error("enable_channel(): could not read output states: " + psu_->get_last_error());
             return false;
+        }
+        for (const auto& c : config_.channels) {
+            if (c.role == PSUChannelRole::CPU_POWER && !(c.channel >= 1 && c.channel <= 3 && on[c.channel - 1])) {
+                set_error("enable_channel(): ch" + std::to_string(channel) + " refused — electronics ch"
+                          + std::to_string(c.channel) + " is off, enable it first");
+                return false;
+            }
+        }
+        double from_v = 0.0;
+        if (!psu_->measure_voltage(from_v)) {
+            set_error("enable_channel(): measure_voltage failed: " + psu_->get_last_error());
+            return false;
+        }
+        // Output off (or near 0V): safe start — force 0V before enabling the output.
+        if (from_v < constants::PSU_VOLTAGE_TOLERANCE_V) {
+            from_v = 0.0;
+            if (!psu_->set_voltage(0.0)) {
+                set_error("enable_channel(): could not zero ch" + std::to_string(channel)
+                          + " before enabling: " + psu_->get_last_error());
+                return false;
+            }
         }
         if (!psu_->set_output(true)) {
             set_error("enable_channel(): set_output(true) failed: " + psu_->get_last_error());
             return false;
         }
         LOG_INFO("PowerSupplyController: ramping ch" + std::to_string(channel) + " (" + cfg->name
-                 + ") 0V -> " + std::to_string(cfg->target_voltage_v) + "V");
-        if (!ramp_voltage(channel, 0.0, cfg->target_voltage_v, cfg->ramp_step_v, cfg->ramp_interval_ms)) {
+                 + ") " + std::to_string(from_v) + "V -> " + std::to_string(cfg->target_voltage_v) + "V");
+        if (!ramp_voltage(channel, from_v, cfg->target_voltage_v, cfg->ramp_step_v, cfg->ramp_interval_ms)) {
             LOG_ERROR("PowerSupplyController: ramp-up aborted for ch" + std::to_string(channel)
                       + " — output left ON at last safe setpoint, not at target");
             return false;
@@ -196,6 +266,9 @@ bool PowerSupplyController::disable_channel(uint8_t channel) {
         set_error("disable_channel(): channel " + std::to_string(channel) + " not configured");
         return false;
     }
+    if (!ensure_connected()) {
+        return false;
+    }
     if (!psu_->select_channel(channel)) {
         set_error("disable_channel(): select_channel failed: " + psu_->get_last_error());
         return false;
@@ -218,8 +291,11 @@ bool PowerSupplyController::disable_channel(uint8_t channel) {
 }
 
 void PowerSupplyController::emergency_shutdown() {
+    abort_ramp_ = true;
     std::lock_guard<std::mutex> lock(mutex_);
+    abort_ramp_ = false;
     LOG_WARNING("PowerSupplyController: emergency_shutdown() — disabling all channels immediately, no ramp");
+    ensure_connected();
     for (const auto& ch : config_.channels) {
         if (ch.role == PSUChannelRole::UNUSED) {
             continue;
@@ -240,6 +316,7 @@ std::vector<PSUChannelStatus> PowerSupplyController::poll() {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<PSUChannelStatus> result;
     result.reserve(config_.channels.size());
+    ensure_connected();
 
     uint64_t now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());

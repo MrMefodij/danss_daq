@@ -84,11 +84,16 @@ public:
 private:
     const PSUChannelConfig* find_channel(uint8_t channel) const;
 
+    /// @brief Reconnect (and take remote control) if the link was dropped.
+    bool ensure_connected();
+
     /// @brief Drive the selected channel's voltage from `from_v` to `to_v`
     /// in `step_v` increments (sign inferred), sleeping `interval_ms`
     /// between steps. Aborts (returning false) on the first communication
-    /// error, leaving the channel at its last successfully-set voltage —
-    /// never leaves it silently jumping to the target on failure.
+    /// error, on emergency_shutdown(), or — when ramping up an interlocked
+    /// channel — when the interlock drops, leaving the channel at its last
+    /// successfully-set voltage — never leaves it silently jumping to the
+    /// target on failure.
     bool ramp_voltage(uint8_t channel, double from_v, double to_v, double step_v, uint32_t interval_ms);
 
     void set_error(const std::string& error);
@@ -96,7 +101,8 @@ private:
     PSUConfig config_;
     std::unique_ptr<OwonPSU> psu_;
     std::atomic<bool> interlock_ready_{false};
-
+    std::atomic<bool> abort_ramp_{false};
+    bool protections_ok_ = false;
     mutable std::mutex mutex_; // serializes channel operations (enable/disable/ramp/poll)
     std::string last_error_;
 };

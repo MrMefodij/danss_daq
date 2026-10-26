@@ -5,6 +5,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/write.hpp>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -24,8 +25,8 @@ OwonPSU::OwonPSU(const std::string& host, uint16_t port)
     : socket_(nullptr)
     , host_(host)
     , port_(port)
-    , timeout_ms_(1000)
-    , selected_channel_(-1)
+    , response_timeout_ms_(1000)
+    , connect_timeout_ms_(2000)
 {
 }
 
@@ -56,10 +57,18 @@ bool OwonPSU::connect() {
                 ec = result_ec;
             });
 
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms_);
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(connect_timeout_ms_);
         do {
             io_context_.run_one_for(std::chrono::milliseconds(50));
         } while (ec == boost::asio::error::would_block && std::chrono::steady_clock::now() < deadline);
+        if (ec == boost::asio::error::would_block) {
+            boost::system::error_code ignored;
+            socket_->close(ignored);
+            while (ec == boost::asio::error::would_block) {
+                io_context_.run_one();
+            }
+            ec = boost::asio::error::timed_out;
+        }
         io_context_.restart();
 
         if (ec || !socket_->is_open()) {
@@ -69,7 +78,6 @@ bool OwonPSU::connect() {
         }
 
         socket_->set_option(tcp::no_delay(true));
-        selected_channel_ = -1;
         LOG_INFO("OwonPSU: connected to " + host_ + ":" + std::to_string(port_));
         return true;
 
@@ -87,7 +95,6 @@ void OwonPSU::disconnect() {
         socket_->close(ec);
         socket_.reset();
     }
-    selected_channel_ = -1;
 }
 
 bool OwonPSU::is_connected() const {
@@ -95,9 +102,14 @@ bool OwonPSU::is_connected() const {
     return socket_ && socket_->is_open();
 }
 
-void OwonPSU::set_timeout(uint32_t timeout_ms) {
+void OwonPSU::set_response_timeout(uint32_t timeout_ms) {
     std::lock_guard<std::mutex> lock(mutex_);
-    timeout_ms_ = timeout_ms;
+    response_timeout_ms_ = timeout_ms;
+}
+
+void OwonPSU::set_connect_timeout(uint32_t timeout_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    connect_timeout_ms_ = timeout_ms;
 }
 
 // =============================================================================
@@ -129,7 +141,7 @@ bool OwonPSU::read_line(std::string& line_out) {
     line_out.clear();
     int fd = socket_->native_handle();
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms_);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(response_timeout_ms_);
 
     char byte;
     while (true) {
@@ -150,7 +162,10 @@ bool OwonPSU::read_line(std::string& line_out) {
 
         int ret = select(fd + 1, &read_fds, nullptr, nullptr, &tv);
         if (ret < 0) {
-            set_error("read_line(): select() failed");
+            if (errno == EINTR) {
+                continue;
+            }
+            set_error(std::string("read_line(): select() failed: ") + std::strerror(errno));
             return false;
         }
         if (ret == 0) {
@@ -183,6 +198,7 @@ bool OwonPSU::send_command(const std::string& cmd) {
     stats_.total_commands++;
     if (!write_line(cmd)) {
         stats_.protocol_errors++;
+        socket_.reset();
         return false;
     }
 
@@ -200,16 +216,17 @@ bool OwonPSU::send_query(const std::string& cmd, std::string& reply_out) {
 
     if (!write_line(cmd)) {
         stats_.protocol_errors++;
+        socket_.reset();
         return false;
     }
 
     if (!read_line(reply_out)) {
-        // Distinguish timeout vs. hard error for statistics, mirroring ModbusRTU.
-        if (last_error_.find("timeout") != std::string::npos) {
+        if (get_last_error().find("timeout") != std::string::npos) {
             stats_.timeouts++;
         } else {
             stats_.protocol_errors++;
         }
+        socket_.reset();
         return false;
     }
 
@@ -240,20 +257,9 @@ bool OwonPSU::select_channel(uint8_t channel) {
         set_error("select_channel(): invalid channel " + std::to_string(channel));
         return false;
     }
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (selected_channel_ == channel) {
-            return true; // already selected — avoid a redundant round-trip
-        }
-    }
     std::ostringstream cmd;
     cmd << "INSTrument:NSELect " << static_cast<int>(channel);
-    if (!send_command(cmd.str())) {
-        return false;
-    }
-    std::lock_guard<std::mutex> lock(mutex_);
-    selected_channel_ = channel;
-    return true;
+    return send_command(cmd.str());
 }
 
 // =============================================================================
@@ -287,6 +293,34 @@ bool OwonPSU::set_current_protection(double amps) {
 
 bool OwonPSU::set_output(bool on) {
     return send_command(std::string("OUTPut:STATe ") + (on ? "1" : "0"));
+}
+
+bool OwonPSU::get_voltage_protection(double& volts_out) {
+    std::string reply;
+    if (!send_query("VOLTage:LIMit?", reply)) {
+        return false;
+    }
+    try {
+        volts_out = std::stod(reply);
+    } catch (const std::exception&) {
+        set_error("get_voltage_protection(): unparsable reply '" + reply + "'");
+        return false;
+    }
+    return true;
+}
+
+bool OwonPSU::get_current_protection(double& amps_out) {
+    std::string reply;
+    if (!send_query("CURRent:LIMit?", reply)) {
+        return false;
+    }
+    try {
+        amps_out = std::stod(reply);
+    } catch (const std::exception&) {
+        set_error("get_current_protection(): unparsable reply '" + reply + "'");
+        return false;
+    }
+    return true;
 }
 
 // =============================================================================
@@ -407,8 +441,16 @@ void OwonPSU::reset_statistics() {
     stats_ = Statistics{};
 }
 
+std::string OwonPSU::get_last_error() const {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    return last_error_;
+}
+
 void OwonPSU::set_error(const std::string& error) {
-    last_error_ = error;
+    {
+        std::lock_guard<std::mutex> lock(error_mutex_);
+        last_error_ = error;
+    }
     LOG_ERROR("OwonPSU: " + error);
 }
 
