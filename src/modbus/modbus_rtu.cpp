@@ -2,16 +2,57 @@
 #include "common/constants.h"
 #include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
+#include <algorithm>
+#include <cassert>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <thread>
 
-#ifdef __linux__
 #include <sys/select.h>
+#include <termios.h>
 #include <unistd.h>
-#endif
 
 using namespace danss;
 using namespace danss::constants;
+
+namespace {
+
+const char* exception_name(uint8_t code) {
+    switch (code) {
+        case MODBUS_EXCEPTION_ILLEGAL_FUNCTION:     return "illegal function";
+        case MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS: return "illegal data address";
+        case MODBUS_EXCEPTION_ILLEGAL_DATA_VALUE:   return "illegal data value";
+        case MODBUS_EXCEPTION_SLAVE_DEVICE_FAILURE: return "slave device failure";
+        default:                                    return "unknown";
+    }
+}
+
+std::string reply_mismatch(const std::vector<uint8_t>& request, const std::vector<uint8_t>& response) {
+    switch (request[1]) {
+        case MODBUS_FC_READ_HOLDING_REGISTERS:
+        case MODBUS_FC_READ_INPUT_REGISTERS: {
+            const size_t count = (static_cast<size_t>(request[4]) << 8) | request[5];
+            if (response[2] != 2 * count) {
+                return "Response has " + std::to_string(response[2] / 2) + " registers, expected "
+                       + std::to_string(count);
+            }
+            return "";
+        }
+        case MODBUS_FC_WRITE_SINGLE_REGISTER:
+            if (response != request) return "Write single register: response does not match request";
+            return "";
+        case MODBUS_FC_WRITE_MULTIPLE_REGISTERS:
+            if (!std::equal(request.begin(), request.begin() + 6, response.begin())) {
+                return "Write multiple registers: response does not match request";
+            }
+            return "";
+        default:
+            return "";
+    }
+}
+
+} // namespace
 
 // =============================================================================
 // Constructor / Destructor
@@ -92,7 +133,8 @@ bool ModbusRTU::read_input_registers(
         return false;
     }
     
-    return parse_read_response(response, MODBUS_FC_READ_INPUT_REGISTERS, values);
+    parse_read_response(response, values);
+    return true;
 }
 
 bool ModbusRTU::read_holding_registers(
@@ -108,7 +150,8 @@ bool ModbusRTU::read_holding_registers(
         return false;
     }
     
-    return parse_read_response(response, MODBUS_FC_READ_HOLDING_REGISTERS, values);
+    parse_read_response(response, values);
+    return true;
 }
 
 bool ModbusRTU::write_single_register(
@@ -119,25 +162,7 @@ bool ModbusRTU::write_single_register(
     auto request = build_write_single_request(slave_addr, reg_addr, value);
     std::vector<uint8_t> response;
     
-    if (!transact(request, response)) {
-        return false;
-    }
-    
-    // Validate echo response
-    if (response.size() != request.size()) {
-        set_error("Write single register: Invalid response size");
-        return false;
-    }
-    
-    // Response should echo the request (minus CRC which we already verified)
-    for (size_t i = 0; i < response.size() - 2; ++i) {
-        if (response[i] != request[i]) {
-            set_error("Write single register: Response does not match request");
-            return false;
-        }
-    }
-    
-    return true;
+    return transact(request, response);
 }
 
 bool ModbusRTU::write_multiple_registers(
@@ -145,14 +170,11 @@ bool ModbusRTU::write_multiple_registers(
     uint16_t start_reg,
     const std::vector<uint16_t>& values)
 {
+    assert(!values.empty() && values.size() <= MODBUS_MAX_WRITE_REGISTERS && "write: count must be 1-123");
     auto request = build_write_multiple_request(slave_addr, start_reg, values);
     std::vector<uint8_t> response;
     
-    if (!transact(request, response)) {
-        return false;
-    }
-    
-    return validate_response(response, slave_addr, MODBUS_FC_WRITE_MULTIPLE_REGISTERS);
+    return transact(request, response);
 }
 
 // =============================================================================
@@ -167,143 +189,142 @@ bool ModbusRTU::transact(const std::vector<uint8_t>& request, std::vector<uint8_
         return false;
     }
     
-    auto start_time = std::chrono::steady_clock::now();
-    
     try {
         boost::system::error_code ec;
         
         // Wait T3.5 inter-frame delay before sending
         std::this_thread::sleep_for(std::chrono::microseconds(MODBUS_T35_CHAR_US));
+        tcflush(serial_port_->native_handle(), TCIFLUSH);
+        auto start_time = std::chrono::steady_clock::now();
         
         // Send request
         boost::asio::write(*serial_port_, boost::asio::buffer(request), ec);
         if (ec) {
             set_error("Write error: " + ec.message());
+            update_stats(false, 0.0);
             return false;
         }
         
-        // Read response with timeout using sync operations with deadline
+        // Read response
         response.clear();
         response.resize(MODBUS_RTU_MAX_FRAME_SIZE);
-        
+
+        auto frame_length = [&response](size_t have) -> size_t {
+            if (have < 2) return 0;
+            const uint8_t fc = response[1];
+            if (fc & 0x80) return 5;
+            if (fc == MODBUS_FC_WRITE_SINGLE_REGISTER || fc == MODBUS_FC_WRITE_MULTIPLE_REGISTERS) return 8;
+            if (fc == MODBUS_FC_READ_HOLDING_REGISTERS || fc == MODBUS_FC_READ_INPUT_REGISTERS)
+                return have < 3 ? 0 : 5 + static_cast<size_t>(response[2]);
+            return have;
+        };
+
         size_t bytes_read = 0;
+        size_t expected = 0;
+        const int fd = serial_port_->native_handle();
         auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms_);
-        
-        // Set a short timeout for initial byte
-        bool got_first_byte = false;
-        
-        while (std::chrono::steady_clock::now() < deadline) {
-            // Try to read one byte at a time with very short timeout
-            ec.clear();
-            
-            // Use read with timeout by checking time before blocking read
+
+        while (expected == 0 || bytes_read < expected) {
             auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                 deadline - std::chrono::steady_clock::now()).count();
-            
             if (remaining <= 0) {
-                break; // Timeout
+                break;
             }
-            
-            // Non-blocking read attempt
-            #ifdef __linux__
-            // On Linux, we can use native_handle to set non-blocking mode temporarily
-            int fd = serial_port_->native_handle();
-            
-            // Use select() to wait for data with timeout
+
             fd_set read_fds;
             FD_ZERO(&read_fds);
             FD_SET(fd, &read_fds);
-            
             struct timeval tv;
             tv.tv_sec = remaining / 1000;
             tv.tv_usec = (remaining % 1000) * 1000;
-            
             int ret = select(fd + 1, &read_fds, NULL, NULL, &tv);
-            
-            if (ret > 0) {
-                // Data available, read it
-                size_t n = boost::asio::read(*serial_port_,
-                    boost::asio::buffer(response.data() + bytes_read, 1), ec);
-                
-                if (ec && ec != boost::asio::error::eof) {
-                    set_error("Read error: " + ec.message());
-                    return false;
+            if (ret < 0) {
+                if (errno == EINTR) {
+                    continue;
                 }
-                
-                if (n > 0) {
-                    bytes_read += n;
-                    got_first_byte = true;
-                    
-                    // If we got the first byte, read the rest more aggressively
-                    if (bytes_read >= MODBUS_RTU_MIN_FRAME_SIZE) {
-                        // Wait for frame to complete (T3.5)
-                        std::this_thread::sleep_for(std::chrono::microseconds(MODBUS_T35_CHAR_US * 2));
-                        
-                        // Try to read any remaining bytes
-                        FD_ZERO(&read_fds);
-                        FD_SET(fd, &read_fds);
-                        tv.tv_sec = 0;
-                        tv.tv_usec = 1000; // 1ms
-                        
-                        ret = select(fd + 1, &read_fds, NULL, NULL, &tv);
-                        if (ret > 0) {
-                            // More data available
-                            size_t remaining_space = response.size() - bytes_read;
-                            n = boost::asio::read(*serial_port_,
-                                boost::asio::buffer(response.data() + bytes_read, remaining_space), 
-                                boost::asio::transfer_at_least(1), ec);
-                            bytes_read += n;
-                        }
-                        
-                        // Frame should be complete now
-                        break;
-                    }
-                }
-            } else if (ret == 0) {
-                // Timeout on this iteration
-                if (got_first_byte && bytes_read >= MODBUS_RTU_MIN_FRAME_SIZE) {
-                    // We have minimum frame, consider it complete
-                    break;
-                }
-                // Otherwise continue waiting
-            } else {
-                // Error in select
-                set_error("Select error");
+                set_error(std::string("Select error: ") + std::strerror(errno));
+                update_stats(false, 0.0);
                 return false;
             }
-            #else
-            // Fallback for non-Linux: simple blocking read with overall timeout
-            size_t n = boost::asio::read(*serial_port_,
-                boost::asio::buffer(response.data() + bytes_read, 1), ec);
-            
-            if (ec && ec != boost::asio::error::eof) {
+            if (ret == 0) {
+                break;
+            }
+
+            size_t to_read = expected ? expected - bytes_read : (bytes_read < 2 ? 2 : 3) - bytes_read;
+            size_t n = serial_port_->read_some(
+                boost::asio::buffer(response.data() + bytes_read, to_read), ec);
+            if (ec) {
                 set_error("Read error: " + ec.message());
+                update_stats(false, 0.0);
                 return false;
             }
-            
-            if (n > 0) {
-                bytes_read += n;
-                if (bytes_read >= MODBUS_RTU_MIN_FRAME_SIZE) {
-                    std::this_thread::sleep_for(std::chrono::microseconds(MODBUS_T35_CHAR_US * 2));
-                    break;
-                }
+            bytes_read += n;
+            expected = frame_length(bytes_read);
+
+            if (expected > MODBUS_RTU_MAX_FRAME_SIZE) {
+                set_error("Invalid byte count in response");
+                stats_.protocol_errors++;
+                update_stats(false, 0.0);
+                return false;
             }
-            #endif
         }
-        
+
+        if (bytes_read > 0 && (expected == 0 || bytes_read < expected)) {
+            set_error("Incomplete response: got " + std::to_string(bytes_read) + " of "
+                      + (expected ? std::to_string(expected) : std::string("?")) + " bytes");
+            stats_.timeouts++;
+            update_stats(false, 0.0);
+            return false;
+        }
+
         if (bytes_read == 0) {
             set_error("Timeout waiting for response");
             stats_.timeouts++;
             update_stats(false, 0.0);
             return false;
         }
-        
+
+        if (bytes_read < MODBUS_RTU_MIN_FRAME_SIZE) {
+            set_error("Response too short: " + std::to_string(bytes_read)
+                      + " bytes, function code " + std::to_string(response[1]));
+            stats_.protocol_errors++;
+            update_stats(false, 0.0);
+            return false;
+        }
+
         response.resize(bytes_read);
         
         // Verify CRC
         if (!verify_crc(response)) {
             set_error("CRC error in response");
             stats_.crc_errors++;
+            update_stats(false, 0.0);
+            return false;
+        }
+        if (response[0] != request[0]) {
+            set_error("Unexpected slave address in response: " + std::to_string(response[0])
+                      + " instead of " + std::to_string(request[0]));
+            stats_.protocol_errors++;
+            update_stats(false, 0.0);
+            return false;
+        }
+        if ((response[1] & 0x7F) != request[1]) {
+            set_error("Unexpected function code in response: " + std::to_string(response[1]));
+            stats_.protocol_errors++;
+            update_stats(false, 0.0);
+            return false;
+        }
+        if (response[1] & 0x80) {
+            set_error("Modbus exception " + std::to_string(response[2]) + " ("
+                      + exception_name(response[2]) + ")");
+            stats_.exception_responses++;
+            update_stats(false, 0.0);
+            return false;
+        }
+        const std::string mismatch = reply_mismatch(request, response);
+        if (!mismatch.empty()) {
+            set_error(mismatch);
+            stats_.protocol_errors++;
             update_stats(false, 0.0);
             return false;
         }
@@ -397,40 +418,11 @@ std::vector<uint8_t> ModbusRTU::build_write_multiple_request(
 // Response Parser
 // =============================================================================
 
-bool ModbusRTU::parse_read_response(
+void ModbusRTU::parse_read_response(
     const std::vector<uint8_t>& response,
-    uint8_t expected_function,
     std::vector<uint16_t>& values)
 {
-    if (response.size() < 5) { // Min: addr + fc + byte_count + crc(2)
-        set_error("Response too short");
-        return false;
-    }
-    
-    uint8_t function_code = response[1];
-    
-    // Check for exception
-    if (function_code & 0x80) {
-        uint8_t exception_code = response[2];
-        set_error("Modbus exception: " + std::to_string(exception_code));
-        stats_.exception_responses++;
-        return false;
-    }
-    
-    if (function_code != expected_function) {
-        set_error("Unexpected function code in response");
-        return false;
-    }
-    
-    uint8_t byte_count = response[2];
-    size_t expected_size = 3 + byte_count + 2; // addr + fc + count + data + crc
-    
-    if (response.size() != expected_size) {
-        set_error("Response size mismatch");
-        return false;
-    }
-    
-    // Extract register values
+    const size_t byte_count = response[2];
     values.clear();
     values.reserve(byte_count / 2);
     
@@ -439,40 +431,6 @@ bool ModbusRTU::parse_read_response(
                          static_cast<uint16_t>(response[3 + i + 1]);
         values.push_back(value);
     }
-    
-    return true;
-}
-
-bool ModbusRTU::validate_response(
-    const std::vector<uint8_t>& response,
-    uint8_t expected_slave,
-    uint8_t expected_function)
-{
-    if (response.size() < MODBUS_RTU_MIN_FRAME_SIZE) {
-        set_error("Response too short");
-        return false;
-    }
-    
-    if (response[0] != expected_slave) {
-        set_error("Unexpected slave address in response");
-        return false;
-    }
-    
-    uint8_t function_code = response[1];
-    
-    if (function_code & 0x80) {
-        uint8_t exception_code = response[2];
-        set_error("Modbus exception: " + std::to_string(exception_code));
-        stats_.exception_responses++;
-        return false;
-    }
-    
-    if (function_code != expected_function) {
-        set_error("Unexpected function code in response");
-        return false;
-    }
-    
-    return true;
 }
 
 // =============================================================================
@@ -492,6 +450,16 @@ void ModbusRTU::reset_statistics() {
 // =============================================================================
 // Helper Methods
 // =============================================================================
+
+std::string ModbusRTU::get_last_error() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_error_;
+}
+
+uint32_t ModbusRTU::get_timeout() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return timeout_ms_;
+}
 
 void ModbusRTU::set_error(const std::string& error) {
     last_error_ = error;

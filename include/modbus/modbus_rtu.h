@@ -46,7 +46,7 @@ public:
     void set_timeout(uint32_t timeout_ms);
     
     /// @brief Get current timeout
-    uint32_t get_timeout() const { return timeout_ms_; }
+    uint32_t get_timeout() const;
     
     // =========================================================================
     // Modbus Functions
@@ -110,6 +110,7 @@ public:
         uint64_t timeouts = 0;
         uint64_t crc_errors = 0;
         uint64_t exception_responses = 0;
+        uint64_t protocol_errors = 0;
         double avg_response_time_ms = 0.0;
     };
     
@@ -120,7 +121,7 @@ public:
     void reset_statistics();
     
     /// @brief Get last error message
-    std::string get_last_error() const { return last_error_; }
+    std::string get_last_error() const;
 
 private:
     // =========================================================================
@@ -130,7 +131,8 @@ private:
     /// @brief Send Modbus request and receive response
     /// @param request Request frame
     /// @param[out] response Response frame
-    /// @return true on success
+    /// @return true only for a valid reply to request: correct CRC,
+    ///         same slave address and function code, not an exception and register count
     bool transact(const std::vector<uint8_t>& request, std::vector<uint8_t>& response);
     
     /// @brief Build read registers request
@@ -142,9 +144,8 @@ private:
     );
     
     /// @brief Parse read registers response
-    bool parse_read_response(
+    static void parse_read_response(
         const std::vector<uint8_t>& response,
-        uint8_t expected_function,
         std::vector<uint16_t>& values
     );
     
@@ -160,13 +161,6 @@ private:
         uint8_t slave_addr,
         uint16_t start_reg,
         const std::vector<uint16_t>& values
-    );
-    
-    /// @brief Validate response and check for exceptions
-    bool validate_response(
-        const std::vector<uint8_t>& response,
-        uint8_t expected_slave,
-        uint8_t expected_function
     );
     
     /// @brief Calculate Modbus RTU CRC16

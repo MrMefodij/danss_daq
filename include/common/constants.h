@@ -27,9 +27,10 @@ constexpr uint8_t MODBUS_EXCEPTION_SLAVE_DEVICE_FAILURE = 0x04;
 constexpr uint8_t MODBUS_MIN_ADDRESS = 1;
 constexpr uint8_t MODBUS_MAX_ADDRESS = 247;
 constexpr uint16_t MODBUS_MAX_REGISTERS = 125; // Per transaction
+constexpr uint16_t MODBUS_MAX_WRITE_REGISTERS = 123; // Per write transaction (FC 0x10)
 
 // Frame sizes
-constexpr size_t MODBUS_RTU_MIN_FRAME_SIZE = 4; // Address + FC + CRC (exception)
+constexpr size_t MODBUS_RTU_MIN_FRAME_SIZE = 5; // Exception: address + FC + code + CRC(2)
 constexpr size_t MODBUS_RTU_MAX_FRAME_SIZE = 256;
 
 // Timing (per Modbus RTU specification)

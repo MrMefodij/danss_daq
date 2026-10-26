@@ -17,7 +17,7 @@ struct ScanResult {
     uint16_t update_counter = 0;    // input 0
     uint16_t hv_status = 0;         // input 1: 0ttt eeee eeee eeee
     uint16_t gain_trip_status = 0;  // input 2: 0000 0rrr 0000 0aaa
-    std::vector<uint16_t> status_block; // input 0-27 (только в полном режиме)
+    std::vector<uint16_t> status_block; // input 0-27
     std::string error_msg;
     double response_time_ms = 0.0;
 };
@@ -60,7 +60,7 @@ void print_usage() {
     std::cout << "  -e, --end <addr>     End address (default: 247)\n";
     std::cout << "  -t, --timeout <ms>   Timeout per address (default: 500)\n";
     std::cout << "  -v, --verbose        Verbose output (show all attempts)\n";
-    std::cout << "  -q, --quick          Quick scan (skip detailed info)\n";
+    std::cout << "  -q, --quick          Summary table only (no per-channel details)\n";
     std::cout << "  --show-addresses     Show address being scanned (non-verbose)\n";
     std::cout << "  --delay <ms>         Delay between scans (default: 100)\n";
     std::cout << "\n";
@@ -73,37 +73,30 @@ void print_usage() {
     std::cout << "\n";
 }
 
-ScanResult scan_address(ModbusRTU& modbus, uint8_t addr, bool quick_scan) {
+ScanResult scan_address(ModbusRTU& modbus, uint8_t addr) {
     ScanResult result;
     result.address = addr;
     result.responsive = false;
     
     auto start = std::chrono::steady_clock::now();
     
-    // Input 0-2: счётчик обновлений, статус HV, статус усиления/trip (карта v2)
-    std::vector<uint16_t> values;
-    bool success = modbus.read_input_registers(addr, constants::REG_UPDATE_COUNTER, 3, values);
+    // Один запрос: блок состояния input 0-27 (карта v2).
+    std::vector<uint16_t> block;
+    bool success = modbus.read_input_registers(addr, constants::INPUT_STATUS_BLOCK_START,
+                                               constants::INPUT_STATUS_BLOCK_COUNT, block);
     
     auto end = std::chrono::steady_clock::now();
     result.response_time_ms = std::chrono::duration<double, std::milli>(end - start).count();
     
-    if (success && values.size() >= 3) {
+    if (success && block.size() == constants::INPUT_STATUS_BLOCK_COUNT) {
         result.responsive = true;
-        result.update_counter = values[constants::REG_UPDATE_COUNTER];
-        result.hv_status = values[constants::REG_HV_STATUS];
-        result.gain_trip_status = values[constants::REG_GAIN_TRIP_STATUS];
-        
-        if (!quick_scan) {
-            // Полный блок состояния 0-27 одной транзакцией: токи, температуры, CPU
-            std::vector<uint16_t> block;
-            if (modbus.read_input_registers(addr, constants::INPUT_STATUS_BLOCK_START,
-                                            constants::INPUT_STATUS_BLOCK_COUNT, block) &&
-                block.size() == constants::INPUT_STATUS_BLOCK_COUNT) {
-                result.status_block = block;
-            }
-        }
+        result.update_counter = block[constants::REG_UPDATE_COUNTER];
+        result.hv_status = block[constants::REG_HV_STATUS];
+        result.gain_trip_status = block[constants::REG_GAIN_TRIP_STATUS];
+        result.status_block = std::move(block);
     } else {
-        result.error_msg = modbus.get_last_error();
+        result.error_msg = success ? "Unexpected number of registers in response"
+                                   : modbus.get_last_error();
     }
     
     return result;
@@ -124,7 +117,7 @@ void print_progress_bar(int current, int total, int width = 50) {
     std::cout.flush();
 }
 
-void print_scan_summary(const std::vector<ScanResult>& results, bool verbose) {
+void print_scan_summary(const std::vector<ScanResult>& results, bool verbose, bool quick_scan) {
     std::cout << "\n\n";
     std::cout << "╔════════════════════════════════════════════════════════════╗\n";
     std::cout << "║                    Scan Results                           ║\n";
@@ -176,9 +169,9 @@ void print_scan_summary(const std::vector<ScanResult>& results, bool verbose) {
                       << " has the factory address: assign a real address before use.\n";
         }
         
-        // Подробности (полный режим): HV по каналам, токи, температуры, CPU
+        // Подробности (кроме режима -q): HV по каналам, токи, температуры, CPU
         for (const auto& r : results) {
-            if (!r.responsive || r.status_block.empty()) continue;
+            if (quick_scan || !r.responsive || r.status_block.empty()) continue;
             const auto& b = r.status_block;
             std::cout << "\nBoard " << static_cast<int>(r.address) << ":\n";
             std::cout << "  HV enabled channels: "
@@ -314,7 +307,7 @@ int main(int argc, char* argv[]) {
               << " - " << static_cast<int>(end_addr) << "\n";
     std::cout << "  Timeout: " << timeout_ms << " ms\n";
     std::cout << "  Delay between scans: " << delay_ms << " ms\n";
-    std::cout << "  Mode: " << (quick_scan ? "Quick scan" : "Full scan") << "\n";
+    std::cout << "  Mode: " << (quick_scan ? "Summary only" : "Full report") << "\n";
     std::cout << "\n";
     
     // Setup logger
@@ -365,7 +358,7 @@ int main(int argc, char* argv[]) {
             print_progress_bar(current, total_addresses);
         }
         
-        ScanResult result = scan_address(modbus, addr, quick_scan);
+        ScanResult result = scan_address(modbus, addr);
         results.push_back(result);
         
         if (verbose) {
@@ -388,7 +381,7 @@ int main(int argc, char* argv[]) {
     double total_time = std::chrono::duration<double>(scan_end - scan_start).count();
     
     // Print summary
-    print_scan_summary(results, verbose);
+    print_scan_summary(results, verbose, quick_scan);
     
     std::cout << "\nScan completed in " << std::fixed << std::setprecision(2) 
               << total_time << " seconds\n";
