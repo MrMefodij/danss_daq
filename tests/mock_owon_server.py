@@ -10,6 +10,7 @@ PowerSupplyController без реального блока питания.
   INSTrument:NSELect <1|2|3>
   VOLTage <v> / CURRent <v>
   VOLTage:LIMit <v> / CURRent:LIMit <v>
+  VOLTage:LIMit? / CURRent:LIMit?
   OUTPut:STATe <0|1>
   MEASure:VOLTage:DC? / MEASure:CURRent:DC? / MEASure:POWer:DC?
   MEASure:VOLTage:ALL:DC? / MEASure:CURRent:ALL:DC?
@@ -64,6 +65,10 @@ def handle_client(conn, addr, channels, verbose):
                         selected = int(cmd.split()[-1])
                     except ValueError:
                         pass
+                elif upper in ("VOLTAGE:LIMIT?", "VOLT:LIM?"):
+                    reply = f"{channels[selected].ovp:.3f}"
+                elif upper in ("CURRENT:LIMIT?", "CURR:LIM?"):
+                    reply = f"{channels[selected].ocp:.3f}"
                 elif upper.startswith("VOLTAGE:LIMIT") or upper.startswith("VOLT:LIM"):
                     channels[selected].ovp = float(cmd.split()[-1])
                 elif upper.startswith("CURRENT:LIMIT") or upper.startswith("CURR:LIM"):
