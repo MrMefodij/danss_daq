@@ -89,8 +89,14 @@ public:
     /// @brief [SOURce:]CURRent:LIMit <value> — programmed OCP threshold
     bool set_current_protection(double amps);
 
-    /// @brief OUTPut[:STATe] <0|1> — enable/disable the selected channel's output
-    bool set_output(bool on);
+    /// @brief OUTPut[:STATe] <0|1> — ВСЕ каналы сразу (по руководству ODP: "OUTP ON enables
+    /// the output of all channels"; INSTrument:NSELect на неё не влияет).
+    /// Только для аварийного отключения; для одного канала — set_channel_output().
+    bool set_all_outputs(bool on);
+
+    /// @brief Включить/выключить один канал: CHANnel:OUTPut:ALL? -> изменить один флаг ->
+    /// CHANnel:OUTPut:ALL a,b,c -> прочитать и проверить. Выбранный канал не меняется.
+    bool set_channel_output(uint8_t channel, bool on);
 
     /// @brief [SOURce:]VOLTage:LIMit? / CURRent:LIMit? — read back OVP / OCP threshold
     bool get_voltage_protection(double& volts_out);
@@ -115,12 +121,8 @@ public:
     /// @brief MEASure:CURRent:ALL:DC? — measured current on all 3 channels
     bool measure_all_currents(std::array<double, 3>& out);
 
-    /// @brief OUTPut:STATe? — output state of the currently selected channel
-    bool get_output_state(bool& on_out);
-
-    /// @brief Output state of all 3 channels (INSTrument:NSELect + OUTPut:STATe? per channel).
-    /// NB: the selected channel is changed — re-select before per-channel commands.
-    /// Real ODP6033 (FV V3.10.0) answers OUTPut:STATe:ALL? with a single value, not three.
+    /// @brief CHANnel:OUTPut:ALL? — output state of each channel ("1, 0, 1").
+    /// NB: OUTPut:STATe[:ALL]? is NOT per channel — it returns 1 if any channel is on.
     bool get_all_output_states(std::array<bool, 3>& out);
 
     // =========================================================================

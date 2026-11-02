@@ -14,7 +14,7 @@ PowerSupplyController без реального блока питания.
   OUTPut:STATe <0|1>
   MEASure:VOLTage:DC? / MEASure:CURRent:DC? / MEASure:POWer:DC?
   MEASure:VOLTage:ALL:DC? / MEASure:CURRent:ALL:DC?
-  OUTPut:STATe? (выбранный канал) / OUTPut:STATe:ALL? (одно значение, как у реального прибора)
+  OUTPut[:STATe] <0|1> / ? (все каналы сразу), CHANnel:OUTPut:ALL a,b,c / ? (по каналам)
 
 Измеренное напряжение/ток канала = заданные значения, если выход включен,
 иначе 0 — этого достаточно, чтобы проверить ramp/interlock/poll логику
@@ -77,14 +77,21 @@ def handle_client(conn, addr, channels, verbose):
                     channels[selected].voltage = float(cmd.split()[-1])
                 elif upper.startswith("CURRENT") or upper.startswith("CURR"):
                     channels[selected].current = float(cmd.split()[-1])
-                elif upper.startswith("OUTPUT:STATE:ALL?") or upper.startswith("OUTP:STAT:ALL?"):
-                    # реальный ODP6033 FV V3.10.0 отвечает одним значением, не тремя
+                # Как у реального ODP6033 (руководство + проверка на FV V3.10.0):
+                # OUTPut[:STATe][:ALL] — все каналы сразу, запрос = 1, если включён хоть один;
+                # CHANnel:OUTPut:ALL a,b,c — по каналам, запрос "1, 0, 1".
+                elif upper.startswith("CHANNEL:OUTPUT:ALL?") or upper.startswith("CHAN:OUTP:ALL?"):
+                    reply = ", ".join("1" if channels[c].output else "0" for c in (1, 2, 3))
+                elif upper.startswith("CHANNEL:OUTPUT:ALL") or upper.startswith("CHAN:OUTP:ALL"):
+                    vals = cmd.split(None, 1)[1].replace(" ", "").split(",")
+                    for c, v in zip((1, 2, 3), vals):
+                        channels[c].output = v.upper() in ("1", "ON")
+                elif upper.startswith("OUTP") and upper.endswith("?"):
                     reply = "1" if any(channels[c].output for c in (1, 2, 3)) else "0"
-                elif upper in ("OUTPUT:STATE?", "OUTP:STAT?", "OUTPUT?", "OUTP?"):
-                    reply = "1" if channels[selected].output else "0"
-                elif upper.startswith("OUTPUT:STATE") or upper.startswith("OUTP:STAT"):
-                    val = cmd.split()[-1]
-                    channels[selected].output = val in ("1", "ON")
+                elif upper.startswith("OUTP"):
+                    on = cmd.split()[-1].upper() in ("1", "ON")
+                    for c in (1, 2, 3):
+                        channels[c].output = on
                 elif upper.startswith("MEASURE:VOLTAGE:ALL") or upper.startswith("MEAS:VOLT:ALL"):
                     reply = ",".join(
                         f"{(channels[c].voltage if channels[c].output else 0.0):.3f}" for c in (1, 2, 3)

@@ -126,10 +126,16 @@ void PowerSupplyController::set_interlock_ready(bool ready) {
                                     + std::to_string(ch.channel) + " did not complete — forcing output off");
                     }
                 }
-                if (!psu_->set_output(false)) {
+                ensure_connected();  // после сбоя связи сокет сбрасывается — переподключиться
+                if (!psu_->set_channel_output(ch.channel, false)) {
                     set_error("interlock drop: could not disable ch" + std::to_string(ch.channel)
-                              + ", output may still be ON: " + psu_->get_last_error());
+                              + " — switching ALL outputs off: " + psu_->get_last_error());
                     LOG_ERROR("PowerSupplyController: " + last_error_);
+                    ensure_connected();
+                    if (!psu_->set_all_outputs(false)) {
+                        LOG_CRITICAL("PowerSupplyController: interlock drop: outputs may still be ON: "
+                                     + psu_->get_last_error());
+                    }
                 }
             }
         }
@@ -218,11 +224,6 @@ bool PowerSupplyController::enable_channel(uint8_t channel) {
                 return false;
             }
         }
-        // get_all_output_states() walks over all channels — select ours again
-        if (!psu_->select_channel(channel)) {
-            set_error("enable_channel(): select_channel failed: " + psu_->get_last_error());
-            return false;
-        }
         double from_v = 0.0;
         if (!psu_->measure_voltage(from_v)) {
             set_error("enable_channel(): measure_voltage failed: " + psu_->get_last_error());
@@ -237,8 +238,8 @@ bool PowerSupplyController::enable_channel(uint8_t channel) {
                 return false;
             }
         }
-        if (!psu_->set_output(true)) {
-            set_error("enable_channel(): set_output(true) failed: " + psu_->get_last_error());
+        if (!psu_->set_channel_output(channel, true)) {
+            set_error("enable_channel(): set_channel_output(true) failed: " + psu_->get_last_error());
             return false;
         }
         LOG_INFO("PowerSupplyController: ramping ch" + std::to_string(channel) + " (" + cfg->name
@@ -256,8 +257,8 @@ bool PowerSupplyController::enable_channel(uint8_t channel) {
         set_error("enable_channel(): set_voltage failed: " + psu_->get_last_error());
         return false;
     }
-    if (!psu_->set_output(true)) {
-        set_error("enable_channel(): set_output(true) failed: " + psu_->get_last_error());
+    if (!psu_->set_channel_output(channel, true)) {
+        set_error("enable_channel(): set_channel_output(true) failed: " + psu_->get_last_error());
         return false;
     }
     return true;
@@ -288,8 +289,8 @@ bool PowerSupplyController::disable_channel(uint8_t channel) {
         }
     }
 
-    if (!psu_->set_output(false)) {
-        set_error("disable_channel(): set_output(false) failed: " + psu_->get_last_error());
+    if (!psu_->set_channel_output(channel, false)) {
+        set_error("disable_channel(): set_channel_output(false) failed: " + psu_->get_last_error());
         return false;
     }
     return true;
@@ -300,21 +301,20 @@ void PowerSupplyController::emergency_shutdown() {
     std::lock_guard<std::mutex> lock(mutex_);
     abort_ramp_ = false;
     LOG_WARNING("PowerSupplyController: emergency_shutdown() — disabling all channels immediately, no ramp");
-    ensure_connected();
-    for (const auto& ch : config_.channels) {
-        if (ch.role == PSUChannelRole::UNUSED) {
-            continue;
-        }
-        if (psu_->select_channel(ch.channel)) {
-            if (!psu_->set_output(false)) {
-                LOG_ERROR("PowerSupplyController: emergency_shutdown() failed to disable ch"
-                          + std::to_string(ch.channel) + ": " + psu_->get_last_error());
+    // OUTPut:STATe 0 выключает все выходы одной командой. При сбое — переподключиться и повторить.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (ensure_connected() && psu_->set_all_outputs(false)) {
+            std::array<bool, 3> on{};
+            if (psu_->get_all_output_states(on) && !on[0] && !on[1] && !on[2]) {
+                return;
             }
-        } else {
-            LOG_ERROR("PowerSupplyController: emergency_shutdown() could not select ch"
-                      + std::to_string(ch.channel) + ": " + psu_->get_last_error());
         }
+        LOG_ERROR("PowerSupplyController: emergency_shutdown() attempt " + std::to_string(attempt + 1)
+                  + " failed: " + psu_->get_last_error());
+        psu_->disconnect();
     }
+    set_error("emergency_shutdown(): outputs NOT confirmed off — check the instrument manually");
+    LOG_CRITICAL("PowerSupplyController: " + last_error_);
 }
 
 std::vector<PSUChannelStatus> PowerSupplyController::poll() {
@@ -325,6 +325,11 @@ std::vector<PSUChannelStatus> PowerSupplyController::poll() {
 
     uint64_t now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
+
+    // Состояние выходов всех каналов — один запрос CHANnel:OUTPut:ALL?
+    std::array<bool, 3> states{};
+    const bool states_ok = psu_->get_all_output_states(states);
+    const std::string states_error = states_ok ? "" : psu_->get_last_error();
 
     for (const auto& ch : config_.channels) {
         PSUChannelStatus status{};
@@ -359,13 +364,12 @@ std::vector<PSUChannelStatus> PowerSupplyController::poll() {
         status.measured_power_w = p;
         status.data_valid = true;
 
-        // Output state as read back from the instrument for this (selected) channel
-        bool on = false;
-        if (!psu_->get_output_state(on)) {
+        if (states_ok) {
+            status.output_enabled = states[ch.channel - 1];
+        } else {
             status.data_valid = false;
-            status.error_message = psu_->get_last_error();
+            status.error_message = "output state: " + states_error;
         }
-        status.output_enabled = on;
 
         result.push_back(status);
     }

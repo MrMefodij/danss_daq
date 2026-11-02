@@ -291,8 +291,39 @@ bool OwonPSU::set_current_protection(double amps) {
     return send_command("CURRent:LIMit " + format_value(amps));
 }
 
-bool OwonPSU::set_output(bool on) {
+bool OwonPSU::set_all_outputs(bool on) {
     return send_command(std::string("OUTPut:STATe ") + (on ? "1" : "0"));
+}
+
+bool OwonPSU::set_channel_output(uint8_t channel, bool on) {
+    if (channel < 1 || channel > 3) {
+        set_error("set_channel_output(): invalid channel " + std::to_string(channel));
+        return false;
+    }
+    std::array<bool, 3> states{};
+    if (!get_all_output_states(states)) {
+        return false;
+    }
+    states[channel - 1] = on;
+    std::string cmd = "CHANnel:OUTPut:ALL ";
+    for (size_t i = 0; i < states.size(); ++i) {
+        cmd += (i ? "," : "");
+        cmd += states[i] ? "1" : "0";
+    }
+    if (!send_command(cmd)) {
+        return false;
+    }
+    std::array<bool, 3> check{};
+    if (!get_all_output_states(check)) {
+        return false;
+    }
+    if (check != states) {
+        set_error("set_channel_output(): ch" + std::to_string(channel) + " -> " + (on ? "ON" : "OFF")
+                  + " not confirmed, instrument reports " + std::to_string(check[0]) + ","
+                  + std::to_string(check[1]) + "," + std::to_string(check[2]));
+        return false;
+    }
+    return true;
 }
 
 bool OwonPSU::get_voltage_protection(double& volts_out) {
@@ -411,29 +442,18 @@ bool OwonPSU::measure_all_currents(std::array<double, 3>& out) {
     return true;
 }
 
-bool OwonPSU::get_output_state(bool& on_out) {
-    std::string reply;
-    if (!send_query("OUTPut:STATe?", reply)) {
-        return false;
-    }
-    if (reply == "1" || reply == "ON") {
-        on_out = true;
-    } else if (reply == "0" || reply == "OFF") {
-        on_out = false;
-    } else {
-        set_error("get_output_state(): unparsable reply '" + reply + "'");
-        return false;
-    }
-    return true;
-}
-
 bool OwonPSU::get_all_output_states(std::array<bool, 3>& out) {
-    for (uint8_t ch = 1; ch <= 3; ++ch) {
-        bool on = false;
-        if (!select_channel(ch) || !get_output_state(on)) {
-            return false;
-        }
-        out[ch - 1] = on;
+    std::string reply;
+    if (!send_query("CHANnel:OUTPut:ALL?", reply)) {
+        return false;
+    }
+    std::array<double, 3> raw{};
+    if (!parse_csv3(reply, raw)) {
+        set_error("get_all_output_states(): unparsable reply '" + reply + "'");
+        return false;
+    }
+    for (size_t i = 0; i < out.size(); ++i) {
+        out[i] = raw[i] != 0.0;
     }
     return true;
 }

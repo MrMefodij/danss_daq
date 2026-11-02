@@ -97,7 +97,7 @@ int mode_info(const std::string& host, uint16_t port) {
     if (step(psu.get_idn(idn), "*IDN?", [&] { return psu.get_last_error(); })) std::printf("       %s\n", idn.c_str());
 
     std::array<bool, 3> on{};
-    if (step(psu.get_all_output_states(on), "OUTPut:STATe? по каналам (нужен для проверки питания электроники перед HV)",
+    if (step(psu.get_all_output_states(on), "CHANnel:OUTPut:ALL? (состояние выходов по каналам)",
              [&] { return psu.get_last_error(); }))
         std::printf("       outputs: ch1=%d ch2=%d ch3=%d\n", on[0], on[1], on[2]);
 
@@ -144,6 +144,16 @@ int mode_hv(const std::string& host, uint16_t port, double target, bool drop_int
     if (!step(ctrl.connect(), "connect + SYSTem:REMote", [&] { return ctrl.get_last_error(); })) return 1;
     if (!step(ctrl.apply_protection_limits(), "apply_protection_limits()", [&] { return ctrl.get_last_error(); })) return 1;
     print_poll(ctrl, "start");
+
+    // Без включённого ch3 HV откажет (так и задумано) — тогда тест разгона ничего не проверит
+    bool ch3_on = false;
+    for (const auto& s : ctrl.poll())
+        if (s.channel == 3) ch3_on = s.output_enabled;
+    if (!step(ch3_on, "ch3 (электроника) включён — предусловие теста",
+              [] { return std::string("сначала: psu_bench cpu-on"); })) {
+        ctrl.disconnect();
+        return 1;
+    }
 
     step(!ctrl.enable_channel(1), "ch1 отклонён без интерлока (ожидаемо)", [] { return std::string("HV включился без интерлока!"); });
     ctrl.set_interlock_ready(true);
