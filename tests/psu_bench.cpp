@@ -93,7 +93,7 @@ int mode_info(const std::string& host, uint16_t port) {
     if (step(psu.get_idn(idn), "*IDN?", psu.get_last_error())) std::printf("       %s\n", idn.c_str());
 
     std::array<bool, 3> on{};
-    if (step(psu.get_all_output_states(on), "OUTPut:STATe? по каналам (нужен для проверки питания электроники перед HV)",
+    if (step(psu.get_all_output_states(on), "OUTPut:STATe:ALL? (нужен для проверки питания электроники перед HV)",
              psu.get_last_error()))
         std::printf("       outputs: ch1=%d ch2=%d ch3=%d\n", on[0], on[1], on[2]);
 
