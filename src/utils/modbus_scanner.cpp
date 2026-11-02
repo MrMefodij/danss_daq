@@ -18,8 +18,9 @@ struct ScanResult {
     uint16_t hv_status = 0;         // input 1: 0ttt eeee eeee eeee
     uint16_t gain_trip_status = 0;  // input 2: 0000 0rrr 0000 0aaa
     std::vector<uint16_t> status_block; // input 0-27
-    std::string error_msg;
+    std::string error_msg;           // для ответивших с ошибкой — что именно не так
     double response_time_ms = 0.0;
+    bool data_ok() const { return !status_block.empty(); }
 };
 
 // Список установленных битов: "-" если нет ни одного, иначе "0,2"
@@ -97,6 +98,12 @@ ScanResult scan_address(ModbusRTU& modbus, uint8_t addr) {
     } else {
         result.error_msg = success ? "Unexpected number of registers in response"
                                    : modbus.get_last_error();
+        // Исключение Modbus или ответ с неверным числом регистров — плата на шине ЕСТЬ
+        // (CRC сошёлся), просто не поняла запрос: обычно прошивка не совпадает с картой v2.
+        const std::string& e = result.error_msg;
+        if (e.rfind("Modbus exception", 0) == 0 || e.rfind("Response has", 0) == 0 || success) {
+            result.responsive = true;
+        }
     }
     
     return result;
@@ -146,6 +153,11 @@ void print_scan_summary(const std::vector<ScanResult>& results, bool verbose, bo
         
         bool factory_found = false;
         for (const auto& r : results) {
+            if (r.responsive && !r.data_ok()) {
+                std::cout << std::setw(8) << static_cast<int>(r.address)
+                          << "  answered with error: " << r.error_msg << "\n";
+                continue;
+            }
             if (r.responsive) {
                 std::cout << std::setw(8) << static_cast<int>(r.address)
                           << std::setw(9) << r.update_counter
@@ -311,7 +323,7 @@ int main(int argc, char* argv[]) {
     std::cout << "\n";
     
     // Setup logger
-    danss::log::set_level(verbose ? constants::LogLevel::DEBUG : constants::LogLevel::INFO);
+    danss::logging::set_level(verbose ? constants::LogLevel::DEBUG : constants::LogLevel::INFO);
     
     // Open Modbus connection
     ModbusRTU modbus(device, baud_rate);
@@ -362,7 +374,9 @@ int main(int argc, char* argv[]) {
         results.push_back(result);
         
         if (verbose) {
-            if (result.responsive) {
+            if (result.responsive && !result.data_ok()) {
+                std::cout << "! ANSWERED WITH ERROR (" << result.error_msg << ")\n";
+            } else if (result.responsive) {
                 std::cout << "✓ FOUND (update #: " << result.update_counter 
                           << ", response: " << std::fixed << std::setprecision(1) 
                           << result.response_time_ms << " ms)\n";

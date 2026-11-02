@@ -3,7 +3,6 @@
 #include <boost/asio/read.hpp>
 #include <boost/asio/write.hpp>
 #include <algorithm>
-#include <cassert>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -126,6 +125,12 @@ bool ModbusRTU::read_input_registers(
     uint16_t count,
     std::vector<uint16_t>& values)
 {
+    if (count == 0 || count > MODBUS_MAX_REGISTERS) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        set_error("read: count " + std::to_string(count) + " out of range 1-"
+                  + std::to_string(MODBUS_MAX_REGISTERS));
+        return false;
+    }
     auto request = build_read_request(slave_addr, MODBUS_FC_READ_INPUT_REGISTERS, start_reg, count);
     std::vector<uint8_t> response;
     
@@ -143,6 +148,12 @@ bool ModbusRTU::read_holding_registers(
     uint16_t count,
     std::vector<uint16_t>& values)
 {
+    if (count == 0 || count > MODBUS_MAX_REGISTERS) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        set_error("read: count " + std::to_string(count) + " out of range 1-"
+                  + std::to_string(MODBUS_MAX_REGISTERS));
+        return false;
+    }
     auto request = build_read_request(slave_addr, MODBUS_FC_READ_HOLDING_REGISTERS, start_reg, count);
     std::vector<uint8_t> response;
     
@@ -170,7 +181,13 @@ bool ModbusRTU::write_multiple_registers(
     uint16_t start_reg,
     const std::vector<uint16_t>& values)
 {
-    assert(!values.empty() && values.size() <= MODBUS_MAX_WRITE_REGISTERS && "write: count must be 1-123");
+    // Не assert: в Release он отключается, и в плату ушёл бы битый кадр
+    if (values.empty() || values.size() > MODBUS_MAX_WRITE_REGISTERS) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        set_error("write_multiple_registers(): count " + std::to_string(values.size())
+                  + " out of range 1-" + std::to_string(MODBUS_MAX_WRITE_REGISTERS));
+        return false;
+    }
     auto request = build_write_multiple_request(slave_addr, start_reg, values);
     std::vector<uint8_t> response;
     

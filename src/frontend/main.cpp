@@ -1,6 +1,7 @@
 #include "common/types.h"
 #include "common/constants.h"
 #include "common/logger.h"
+#include "common/config_loader.h"
 #include "modbus/modbus_rtu.h"
 #include <iostream>
 #include <string>
@@ -131,9 +132,9 @@ int main(int argc, char* argv[]) {
     
     // Setup logging
     if (verbose) {
-        danss::log::set_level(constants::LogLevel::DEBUG);
+        danss::logging::set_level(constants::LogLevel::DEBUG);
     }
-    danss::log::set_file("danss_frontend.log");
+    danss::logging::set_file("danss_frontend.log");
     
     LOG_INFO("DANSS Slow Control Frontend starting");
     
@@ -161,7 +162,23 @@ int main(int argc, char* argv[]) {
     if (standalone) {
         LOG_INFO("Running in standalone mode (no MIDAS integration)");
         LOG_INFO("Configuration file: " + config_file);
-        
+
+        SystemConfig config;
+        try {
+            config = ConfigLoader::load_system_config(config_file);
+        } catch (const ConfigError& e) {
+            LOG_ERROR(std::string("Configuration error: ") + e.what());
+            return 1;
+        }
+        for (const auto& br : config.branches) {
+            std::string boards;
+            for (const auto& b : br.boards) {
+                boards += " " + std::to_string(b.address) + (b.enabled ? "" : "(off)");
+            }
+            LOG_INFO("Branch " + std::to_string(br.id) + ": " + br.device + " @" + std::to_string(br.baud_rate)
+                     + ", boards:" + boards);
+        }
+
         // TODO: Initialize RS485Manager, start polling
         
         LOG_INFO("Press Ctrl+C to stop");

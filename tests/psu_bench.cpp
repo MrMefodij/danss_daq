@@ -11,11 +11,14 @@
 //   psu_bench interlock <V>        ch1: разгон к V, на середине снимается интерлок ->
 //                                  разгон должен прерваться, канал опуститься и выключиться
 //
-// Опции: --host <h> (192.168.10.81 = d2pwr1.danss.local), --port <p> (3000), --allow-high (разрешить V > 20).
+// Опции: --host <h> (192.168.10.81 = d2pwr1.danss.local), --port <p> (3000), --allow-high (разрешить V > 20),
+//        --config <power_supply.json> — каналы, пороги и шаг разгона из файла (через ConfigLoader);
+//        в hv/interlock цель ch1 из командной строки, не выше target_voltage_v из файла.
 // Канал 3 (питание электроники) выключается только режимом cpu-off.
 
 #include "common/types.h"
 #include "common/logger.h"
+#include "common/config_loader.h"
 #include "power/owon_psu.h"
 #include "power/power_controller.h"
 
@@ -32,7 +35,37 @@ namespace {
 
 constexpr double HV_SAFE_MAX_V = 20.0;
 
+// --config <file>: каналы и пороги из power_supply.json вместо встроенных тестовых значений
+std::string g_config_file;
+bool g_host_given = false, g_port_given = false;
+
+PSUConfig config_from_file(const std::string& host, uint16_t port, double hv_target_v) {
+    PSUConfig cfg = ConfigLoader::load_power_config(g_config_file);
+    if (g_host_given) cfg.host = host;
+    if (g_port_given) cfg.port = port;
+    bool has_cpu3 = false;
+    PSUChannelConfig* hv1 = nullptr;
+    for (auto& c : cfg.channels) {
+        if (c.channel == 3 && c.role == PSUChannelRole::CPU_POWER) has_cpu3 = true;
+        if (c.channel == 1 && c.role == PSUChannelRole::SIPM_HV) hv1 = &c;
+    }
+    if (!has_cpu3 || !hv1)
+        throw ConfigError(g_config_file + ": psu_bench ожидает ch3 = CPU_POWER и ch1 = SIPM_HV");
+    // Цель HV можно только понизить: OVP остаётся из файла, и он должен быть выше цели
+    if (hv_target_v > 0.0) {
+        if (hv_target_v > hv1->target_voltage_v)
+            throw ConfigError("hv " + std::to_string(hv_target_v) + " В выше target_voltage_v ch1 в "
+                              + g_config_file + " (" + std::to_string(hv1->target_voltage_v) + " В)");
+        hv1->target_voltage_v = hv_target_v;
+    }
+    std::printf("       конфигурация: %s (ch1 OVP %.1f В, шаг %.1f В / %u мс)\n", g_config_file.c_str(),
+                hv1->ovp_limit_v, hv1->ramp_step_v, hv1->ramp_interval_ms);
+    return cfg;
+}
+
 PSUConfig make_config(const std::string& host, uint16_t port, double hv_target_v) {
+    if (!g_config_file.empty()) return config_from_file(host, port, hv_target_v);
+    if (hv_target_v <= 0.0) hv_target_v = 5.0;
     PSUConfig cfg;
     cfg.host = host;
     cfg.port = port;
@@ -73,6 +106,7 @@ PSUConfig make_config(const std::string& host, uint16_t port, double hv_target_v
 
 void print_poll(PowerSupplyController& ctrl, const char* tag) {
     for (const auto& s : ctrl.poll()) {
+        if (!s.data_valid && s.error_message == "channel not in use") continue;  // UNUSED
         std::printf("  [%s] ch%u: %s  V=%.3f  I=%.4f  P=%.3f  out=%s\n", tag, s.channel,
                     s.data_valid ? "ok " : "ERR", s.measured_voltage_v, s.measured_current_a,
                     s.measured_power_w, s.output_enabled ? "ON" : "off");
@@ -118,17 +152,17 @@ int mode_info(const std::string& host, uint16_t port) {
 }
 
 int mode_limits(const std::string& host, uint16_t port) {
-    PowerSupplyController ctrl(make_config(host, port, 5.0));
+    PowerSupplyController ctrl(make_config(host, port, 0.0));
     if (!step(ctrl.connect(), "connect + SYSTem:REMote", [&] { return ctrl.get_last_error(); })) return 1;
     bool ok = step(ctrl.apply_protection_limits(),
-                   "apply_protection_limits(): ch3 OVP 6.5/OCP 3.1, ch1 OVP 7.0/OCP 0.7", [&] { return ctrl.get_last_error(); });
+                   "apply_protection_limits(): OVP/OCP записаны и подтверждены чтением", [&] { return ctrl.get_last_error(); });
     print_poll(ctrl, "after");
     ctrl.disconnect();
     return ok ? 0 : 1;
 }
 
 int mode_cpu(const std::string& host, uint16_t port, bool on) {
-    PowerSupplyController ctrl(make_config(host, port, 5.0));
+    PowerSupplyController ctrl(make_config(host, port, 0.0));
     if (!step(ctrl.connect(), "connect + SYSTem:REMote", [&] { return ctrl.get_last_error(); })) return 1;
     if (!step(ctrl.apply_protection_limits(), "apply_protection_limits()", [&] { return ctrl.get_last_error(); })) return 1;
     bool ok = on ? step(ctrl.enable_channel(3), "enable_channel(3) [CPU_POWER] -> 6.0 В", [&] { return ctrl.get_last_error(); })
@@ -204,8 +238,9 @@ int main(int argc, char** argv) {
 
     for (int a = 1; a < argc; ++a) {
         std::string s = argv[a];
-        if (s == "--host" && a + 1 < argc) host = argv[++a];
-        else if (s == "--port" && a + 1 < argc) port = static_cast<uint16_t>(std::stoi(argv[++a]));
+        if (s == "--host" && a + 1 < argc) { host = argv[++a]; g_host_given = true; }
+        else if (s == "--config" && a + 1 < argc) g_config_file = argv[++a];
+        else if (s == "--port" && a + 1 < argc) { port = static_cast<uint16_t>(std::stoi(argv[++a])); g_port_given = true; }
         else if (s == "--allow-high") allow_high = true;
         else if (mode.empty()) mode = s;
         else volts = std::stod(s);
@@ -213,18 +248,28 @@ int main(int argc, char** argv) {
 
     danss::Logger::instance().set_level(constants::LogLevel::INFO);
 
-    if (mode == "info") return mode_info(host, port);
-    if (mode == "limits") return mode_limits(host, port);
-    if (mode == "cpu-on") return mode_cpu(host, port, true);
-    if (mode == "cpu-off") return mode_cpu(host, port, false);
-    if (mode == "hv" || mode == "interlock") {
-        if (volts <= 0.0) { std::fprintf(stderr, "Укажите напряжение, например: psu_bench %s 5\n", mode.c_str()); return 2; }
-        if (volts > HV_SAFE_MAX_V && !allow_high) {
-            std::fprintf(stderr, "%.1f В > %.0f В: нужен флаг --allow-high\n", volts, HV_SAFE_MAX_V);
-            return 2;
+    try {
+        if (mode == "info" && !g_config_file.empty()) {  // адрес прибора — из файла
+            PSUConfig c = ConfigLoader::load_power_config(g_config_file);
+            if (!g_host_given) host = c.host;
+            if (!g_port_given) port = c.port;
         }
-        return mode_hv(host, port, volts, mode == "interlock");
+        if (mode == "info") return mode_info(host, port);
+        if (mode == "limits") return mode_limits(host, port);
+        if (mode == "cpu-on") return mode_cpu(host, port, true);
+        if (mode == "cpu-off") return mode_cpu(host, port, false);
+        if (mode == "hv" || mode == "interlock") {
+            if (volts <= 0.0) { std::fprintf(stderr, "Укажите напряжение, например: psu_bench %s 5\n", mode.c_str()); return 2; }
+            if (volts > HV_SAFE_MAX_V && !allow_high) {
+                std::fprintf(stderr, "%.1f В > %.0f В: нужен флаг --allow-high\n", volts, HV_SAFE_MAX_V);
+                return 2;
+            }
+            return mode_hv(host, port, volts, mode == "interlock");
+        }
+    } catch (const ConfigError& e) {
+        std::fprintf(stderr, "[FAIL] конфигурация: %s\n", e.what());
+        return 2;
     }
-    std::fprintf(stderr, "Режимы: info | limits | cpu-on | cpu-off | hv <V> | interlock <V>  [--host h] [--port p] [--allow-high]\n");
+    std::fprintf(stderr, "Режимы: info | limits | cpu-on | cpu-off | hv <V> | interlock <V>  [--config power_supply.json] [--host h] [--port p] [--allow-high]\n");
     return 2;
 }

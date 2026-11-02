@@ -39,10 +39,10 @@ private:
 #define LOG_ERROR(msg) danss::Logger::instance().error(msg)
 #define LOG_CRITICAL(msg) danss::Logger::instance().critical(msg)
 
-namespace log {
+namespace logging {  // не "log": перекрыло бы ::log() из <cmath> внутри namespace danss
 inline void set_level(constants::LogLevel level) { Logger::instance().set_level(level); }
 inline void set_file(const std::string& filename) { Logger::instance().set_log_file(filename); }
-} // namespace log
+} // namespace logging
 
 } // namespace danss
 

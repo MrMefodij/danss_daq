@@ -236,6 +236,16 @@ constexpr uint32_t DEFAULT_PSU_POLL_INTERVAL_SEC = 300;
 constexpr uint8_t DEFAULT_PSU_MAX_RETRIES = 3;
 constexpr size_t PSU_NUM_CHANNELS = 3;
 
+// Пределы прибора ODP6033 (паспорт: CH1/CH2 0–60 В / 3 А, CH3 0–6 В / 3 А;
+// OVP/OCP проверены на приборе FV V3.10.0 02.11.2026 — 61.0 В, 6.6 В и 3.1 А он принимает,
+// OCP 3.2 А не принимает). ConfigLoader отклоняет конфигурацию за этими пределами.
+constexpr double PSU_CH12_MAX_V = 60.0;
+constexpr double PSU_CH3_MAX_V = 6.0;
+constexpr double PSU_CH12_MAX_OVP_V = 61.0;
+constexpr double PSU_CH3_MAX_OVP_V = 6.6;
+constexpr double PSU_MAX_CURRENT_A = 3.0;
+constexpr double PSU_MAX_OCP_A = 3.1;
+
 // Default ramp behaviour for HV channels (SiPM bias)
 constexpr double DEFAULT_PSU_RAMP_STEP_V = 1.0;
 constexpr uint32_t DEFAULT_PSU_RAMP_INTERVAL_MS = 500;

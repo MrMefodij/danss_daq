@@ -1,6 +1,7 @@
 {
+  "description": "OWON ODP6033 на стенде ДАНСС-2. host — IP, а не d2pwr1.danss.local: на cvme1 Boost.Asio не разрешает имена .local. Пределы и проверки — см. ConfigLoader.",
   "power_supply": {
-    "host": "d2pwr1.danss.local",
+    "host": "192.168.10.81",
     "port": 3000,
     "poll_interval_sec": 300,
     "connect_timeout_ms": 2000,

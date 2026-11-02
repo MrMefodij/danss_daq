@@ -41,7 +41,38 @@ bool PowerSupplyController::connect() {
 }
 
 bool PowerSupplyController::ensure_connected() {
-    return psu_->is_connected() || connect();
+    if (psu_->is_connected()) {
+        return true;
+    }
+    if (!connect()) {
+        protections_ok_ = false;
+        return false;
+    }
+    // Связь пропадала — прибор мог перезагрузиться и потерять OVP/OCP.
+    // Проверяем только чтением; при расхождении HV не включится до apply_protection_limits().
+    if (protections_ok_) {
+        protections_ok_ = verify_protections();
+    }
+    return true;
+}
+
+bool PowerSupplyController::verify_protections() {
+    for (const auto& ch : config_.channels) {
+        if (ch.role == PSUChannelRole::UNUSED) {
+            continue;
+        }
+        double ovp = 0.0, ocp = 0.0;
+        if (!psu_->select_channel(ch.channel) || !psu_->get_voltage_protection(ovp)
+            || !psu_->get_current_protection(ocp)
+            || std::fabs(ovp - ch.ovp_limit_v) > 0.01 || std::fabs(ocp - ch.ocp_limit_a) > 0.01) {
+            set_error("verify_protections(): ch" + std::to_string(ch.channel)
+                      + " OVP/OCP differ from config after reconnect (OVP=" + std::to_string(ovp)
+                      + "V OCP=" + std::to_string(ocp) + "A) — call apply_protection_limits()");
+            LOG_WARNING("PowerSupplyController: " + last_error_);
+            return false;
+        }
+    }
+    return true;
 }
 
 void PowerSupplyController::disconnect() {

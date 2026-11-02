@@ -87,6 +87,9 @@ private:
     /// @brief Reconnect (and take remote control) if the link was dropped.
     bool ensure_connected();
 
+    /// @brief Read back OVP/OCP of every used channel and compare with config (no writes).
+    bool verify_protections();
+
     /// @brief Drive the selected channel's voltage from `from_v` to `to_v`
     /// in `step_v` increments (sign inferred), sleeping `interval_ms`
     /// between steps. Aborts (returning false) on the first communication
