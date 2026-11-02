@@ -14,7 +14,7 @@ PowerSupplyController без реального блока питания.
   OUTPut:STATe <0|1>
   MEASure:VOLTage:DC? / MEASure:CURRent:DC? / MEASure:POWer:DC?
   MEASure:VOLTage:ALL:DC? / MEASure:CURRent:ALL:DC?
-  OUTPut:STATe:ALL?
+  OUTPut:STATe? (выбранный канал) / OUTPut:STATe:ALL? (одно значение, как у реального прибора)
 
 Измеренное напряжение/ток канала = заданные значения, если выход включен,
 иначе 0 — этого достаточно, чтобы проверить ramp/interlock/poll логику
@@ -78,7 +78,10 @@ def handle_client(conn, addr, channels, verbose):
                 elif upper.startswith("CURRENT") or upper.startswith("CURR"):
                     channels[selected].current = float(cmd.split()[-1])
                 elif upper.startswith("OUTPUT:STATE:ALL?") or upper.startswith("OUTP:STAT:ALL?"):
-                    reply = ",".join("1" if channels[c].output else "0" for c in (1, 2, 3))
+                    # реальный ODP6033 FV V3.10.0 отвечает одним значением, не тремя
+                    reply = "1" if any(channels[c].output for c in (1, 2, 3)) else "0"
+                elif upper in ("OUTPUT:STATE?", "OUTP:STAT?", "OUTPUT?", "OUTP?"):
+                    reply = "1" if channels[selected].output else "0"
                 elif upper.startswith("OUTPUT:STATE") or upper.startswith("OUTP:STAT"):
                     val = cmd.split()[-1]
                     channels[selected].output = val in ("1", "ON")

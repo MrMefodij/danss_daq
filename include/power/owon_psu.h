@@ -115,7 +115,12 @@ public:
     /// @brief MEASure:CURRent:ALL:DC? — measured current on all 3 channels
     bool measure_all_currents(std::array<double, 3>& out);
 
-    /// @brief OUTPut:STATe:ALL? — output enabled state on all 3 channels
+    /// @brief OUTPut:STATe? — output state of the currently selected channel
+    bool get_output_state(bool& on_out);
+
+    /// @brief Output state of all 3 channels (INSTrument:NSELect + OUTPut:STATe? per channel).
+    /// NB: the selected channel is changed — re-select before per-channel commands.
+    /// Real ODP6033 (FV V3.10.0) answers OUTPut:STATe:ALL? with a single value, not three.
     bool get_all_output_states(std::array<bool, 3>& out);
 
     // =========================================================================

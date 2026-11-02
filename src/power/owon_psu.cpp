@@ -411,18 +411,29 @@ bool OwonPSU::measure_all_currents(std::array<double, 3>& out) {
     return true;
 }
 
-bool OwonPSU::get_all_output_states(std::array<bool, 3>& out) {
+bool OwonPSU::get_output_state(bool& on_out) {
     std::string reply;
-    if (!send_query("OUTPut:STATe:ALL?", reply)) {
+    if (!send_query("OUTPut:STATe?", reply)) {
         return false;
     }
-    std::array<double, 3> raw{};
-    if (!parse_csv3(reply, raw)) {
-        set_error("get_all_output_states(): unparsable reply '" + reply + "'");
+    if (reply == "1" || reply == "ON") {
+        on_out = true;
+    } else if (reply == "0" || reply == "OFF") {
+        on_out = false;
+    } else {
+        set_error("get_output_state(): unparsable reply '" + reply + "'");
         return false;
     }
-    for (size_t i = 0; i < out.size(); ++i) {
-        out[i] = raw[i] != 0.0;
+    return true;
+}
+
+bool OwonPSU::get_all_output_states(std::array<bool, 3>& out) {
+    for (uint8_t ch = 1; ch <= 3; ++ch) {
+        bool on = false;
+        if (!select_channel(ch) || !get_output_state(on)) {
+            return false;
+        }
+        out[ch - 1] = on;
     }
     return true;
 }

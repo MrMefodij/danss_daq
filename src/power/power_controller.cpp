@@ -218,6 +218,11 @@ bool PowerSupplyController::enable_channel(uint8_t channel) {
                 return false;
             }
         }
+        // get_all_output_states() walks over all channels — select ours again
+        if (!psu_->select_channel(channel)) {
+            set_error("enable_channel(): select_channel failed: " + psu_->get_last_error());
+            return false;
+        }
         double from_v = 0.0;
         if (!psu_->measure_voltage(from_v)) {
             set_error("enable_channel(): measure_voltage failed: " + psu_->get_last_error());
@@ -354,12 +359,13 @@ std::vector<PSUChannelStatus> PowerSupplyController::poll() {
         status.measured_power_w = p;
         status.data_valid = true;
 
-        // Output state as read back from the instrument for this channel;
-        // OUTPut:STATe:ALL? avoids a 4th round-trip per channel.
-        std::array<bool, 3> states{};
-        if (psu_->get_all_output_states(states) && ch.channel >= 1 && ch.channel <= 3) {
-            status.output_enabled = states[ch.channel - 1];
+        // Output state as read back from the instrument for this (selected) channel
+        bool on = false;
+        if (!psu_->get_output_state(on)) {
+            status.data_valid = false;
+            status.error_message = psu_->get_last_error();
         }
+        status.output_enabled = on;
 
         result.push_back(status);
     }
