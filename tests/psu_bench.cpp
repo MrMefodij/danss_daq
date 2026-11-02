@@ -6,12 +6,13 @@
 //
 //   psu_bench info                 только чтение: IDN, выходы, измерения, OVP/OCP
 //   psu_bench limits               записать OVP/OCP/ток из конфигурации и проверить чтением
+//   psu_bench cpu-on | cpu-off     ch3 (питание электроники) через enable/disable_channel(3)
 //   psu_bench hv <V>               ch1: разгон 0 -> V, выдержка, плавный спуск, выключение
 //   psu_bench interlock <V>        ch1: разгон к V, на середине снимается интерлок ->
 //                                  разгон должен прерваться, канал опуститься и выключиться
 //
 // Опции: --host <h> (192.168.10.81 = d2pwr1.danss.local), --port <p> (3000), --allow-high (разрешить V > 20).
-// Канал 3 (питание электроники) не выключается ни в одном режиме.
+// Канал 3 (питание электроники) выключается только режимом cpu-off.
 
 #include "common/types.h"
 #include "common/logger.h"
@@ -126,6 +127,18 @@ int mode_limits(const std::string& host, uint16_t port) {
     return ok ? 0 : 1;
 }
 
+int mode_cpu(const std::string& host, uint16_t port, bool on) {
+    PowerSupplyController ctrl(make_config(host, port, 5.0));
+    if (!step(ctrl.connect(), "connect + SYSTem:REMote", [&] { return ctrl.get_last_error(); })) return 1;
+    if (!step(ctrl.apply_protection_limits(), "apply_protection_limits()", [&] { return ctrl.get_last_error(); })) return 1;
+    bool ok = on ? step(ctrl.enable_channel(3), "enable_channel(3) [CPU_POWER] -> 6.0 В", [&] { return ctrl.get_last_error(); })
+                 : step(ctrl.disable_channel(3), "disable_channel(3) [CPU_POWER]", [&] { return ctrl.get_last_error(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    print_poll(ctrl, "after");
+    ctrl.disconnect();
+    return ok ? 0 : 1;
+}
+
 int mode_hv(const std::string& host, uint16_t port, double target, bool drop_interlock) {
     PowerSupplyController ctrl(make_config(host, port, target));
     if (!step(ctrl.connect(), "connect + SYSTem:REMote", [&] { return ctrl.get_last_error(); })) return 1;
@@ -192,6 +205,8 @@ int main(int argc, char** argv) {
 
     if (mode == "info") return mode_info(host, port);
     if (mode == "limits") return mode_limits(host, port);
+    if (mode == "cpu-on") return mode_cpu(host, port, true);
+    if (mode == "cpu-off") return mode_cpu(host, port, false);
     if (mode == "hv" || mode == "interlock") {
         if (volts <= 0.0) { std::fprintf(stderr, "Укажите напряжение, например: psu_bench %s 5\n", mode.c_str()); return 2; }
         if (volts > HV_SAFE_MAX_V && !allow_high) {
@@ -200,6 +215,6 @@ int main(int argc, char** argv) {
         }
         return mode_hv(host, port, volts, mode == "interlock");
     }
-    std::fprintf(stderr, "Режимы: info | limits | hv <V> | interlock <V>  [--host h] [--port p] [--allow-high]\n");
+    std::fprintf(stderr, "Режимы: info | limits | cpu-on | cpu-off | hv <V> | interlock <V>  [--host h] [--port p] [--allow-high]\n");
     return 2;
 }
