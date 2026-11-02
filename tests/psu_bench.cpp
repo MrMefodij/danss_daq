@@ -21,6 +21,7 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -47,7 +48,7 @@ PSUConfig make_config(const std::string& host, uint16_t port, double hv_target_v
     cpu.target_voltage_v = 6.0;
     cpu.current_limit_a = 3.0;
     cpu.ovp_limit_v = 6.5;
-    cpu.ocp_limit_a = 3.2;
+    cpu.ocp_limit_a = 3.1;  // максимум прибора 3.1 А (3.2 не примет)
     cpu.ramp_step_v = 1.0;
     cpu.ramp_interval_ms = 500;
     cpu.require_interlock = false;
@@ -78,35 +79,37 @@ void print_poll(PowerSupplyController& ctrl, const char* tag) {
     }
 }
 
-bool step(bool ok, const std::string& what, const std::string& err = "") {
-    std::printf("%s %s%s%s\n", ok ? "[ OK ]" : "[FAIL]", what.c_str(),
-                (!ok && !err.empty()) ? " — " : "", (!ok ? err.c_str() : ""));
+// Ошибку берём лениво: порядок вычисления аргументов не задан, и get_last_error(),
+// переданный значением, мог вызваться ДО проверяемой операции (так и было с GCC).
+bool step(bool ok, const std::string& what, const std::function<std::string()>& err = {}) {
+    std::string e = (!ok && err) ? err() : "";
+    std::printf("%s %s%s%s\n", ok ? "[ OK ]" : "[FAIL]", what.c_str(), e.empty() ? "" : " — ", e.c_str());
     return ok;
 }
 
 int mode_info(const std::string& host, uint16_t port) {
     OwonPSU psu(host, port);
     psu.set_response_timeout(1000);
-    if (!step(psu.connect(), "connect " + host + ":" + std::to_string(port), psu.get_last_error())) return 1;
+    if (!step(psu.connect(), "connect " + host + ":" + std::to_string(port), [&] { return psu.get_last_error(); })) return 1;
 
     std::string idn;
-    if (step(psu.get_idn(idn), "*IDN?", psu.get_last_error())) std::printf("       %s\n", idn.c_str());
+    if (step(psu.get_idn(idn), "*IDN?", [&] { return psu.get_last_error(); })) std::printf("       %s\n", idn.c_str());
 
     std::array<bool, 3> on{};
-    if (step(psu.get_all_output_states(on), "OUTPut:STATe:ALL? (нужен для проверки питания электроники перед HV)",
-             psu.get_last_error()))
+    if (step(psu.get_all_output_states(on), "OUTPut:STATe? по каналам (нужен для проверки питания электроники перед HV)",
+             [&] { return psu.get_last_error(); }))
         std::printf("       outputs: ch1=%d ch2=%d ch3=%d\n", on[0], on[1], on[2]);
 
     std::array<double, 3> v{}, i{};
-    if (step(psu.measure_all_voltages(v), "MEASure:VOLTage:ALL:DC?", psu.get_last_error()))
+    if (step(psu.measure_all_voltages(v), "MEASure:VOLTage:ALL:DC?", [&] { return psu.get_last_error(); }))
         std::printf("       V: %.3f %.3f %.3f\n", v[0], v[1], v[2]);
-    if (step(psu.measure_all_currents(i), "MEASure:CURRent:ALL:DC?", psu.get_last_error()))
+    if (step(psu.measure_all_currents(i), "MEASure:CURRent:ALL:DC?", [&] { return psu.get_last_error(); }))
         std::printf("       I: %.4f %.4f %.4f\n", i[0], i[1], i[2]);
 
     for (uint8_t ch = 1; ch <= 3; ++ch) {
         double ovp = 0, ocp = 0;
         bool ok = psu.select_channel(ch) && psu.get_voltage_protection(ovp) && psu.get_current_protection(ocp);
-        if (step(ok, "ch" + std::to_string(ch) + " OVP/OCP read back", psu.get_last_error()))
+        if (step(ok, "ch" + std::to_string(ch) + " OVP/OCP read back", [&] { return psu.get_last_error(); }))
             std::printf("       OVP=%.3f V  OCP=%.3f A\n", ovp, ocp);
     }
     psu.disconnect();
@@ -115,9 +118,9 @@ int mode_info(const std::string& host, uint16_t port) {
 
 int mode_limits(const std::string& host, uint16_t port) {
     PowerSupplyController ctrl(make_config(host, port, 5.0));
-    if (!step(ctrl.connect(), "connect + SYSTem:REMote", ctrl.get_last_error())) return 1;
+    if (!step(ctrl.connect(), "connect + SYSTem:REMote", [&] { return ctrl.get_last_error(); })) return 1;
     bool ok = step(ctrl.apply_protection_limits(),
-                   "apply_protection_limits(): ch3 OVP 6.5/OCP 3.2, ch1 OVP 7.0/OCP 0.7", ctrl.get_last_error());
+                   "apply_protection_limits(): ch3 OVP 6.5/OCP 3.1, ch1 OVP 7.0/OCP 0.7", [&] { return ctrl.get_last_error(); });
     print_poll(ctrl, "after");
     ctrl.disconnect();
     return ok ? 0 : 1;
@@ -125,17 +128,17 @@ int mode_limits(const std::string& host, uint16_t port) {
 
 int mode_hv(const std::string& host, uint16_t port, double target, bool drop_interlock) {
     PowerSupplyController ctrl(make_config(host, port, target));
-    if (!step(ctrl.connect(), "connect + SYSTem:REMote", ctrl.get_last_error())) return 1;
-    if (!step(ctrl.apply_protection_limits(), "apply_protection_limits()", ctrl.get_last_error())) return 1;
+    if (!step(ctrl.connect(), "connect + SYSTem:REMote", [&] { return ctrl.get_last_error(); })) return 1;
+    if (!step(ctrl.apply_protection_limits(), "apply_protection_limits()", [&] { return ctrl.get_last_error(); })) return 1;
     print_poll(ctrl, "start");
 
-    step(!ctrl.enable_channel(1), "ch1 отклонён без интерлока (ожидаемо)", "HV включился без интерлока!");
+    step(!ctrl.enable_channel(1), "ch1 отклонён без интерлока (ожидаемо)", [] { return std::string("HV включился без интерлока!"); });
     ctrl.set_interlock_ready(true);
 
     if (!drop_interlock) {
         auto t0 = std::chrono::steady_clock::now();
         bool ok = step(ctrl.enable_channel(1), "enable_channel(1): разгон 0 -> " + std::to_string(target) + " В",
-                       ctrl.get_last_error());
+                       [&] { return ctrl.get_last_error(); });
         std::printf("       разгон занял %.1f с\n",
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
         for (int k = 0; k < 3; ++k) {
@@ -143,7 +146,7 @@ int mode_hv(const std::string& host, uint16_t port, double target, bool drop_int
             std::this_thread::sleep_for(std::chrono::seconds(2));
         }
         bool off = step(ctrl.disable_channel(1), "disable_channel(1): плавный спуск и выключение",
-                        ctrl.get_last_error());
+                        [&] { return ctrl.get_last_error(); });
         print_poll(ctrl, "end");
         ctrl.disconnect();
         return (ok && off) ? 0 : 1;
@@ -157,12 +160,12 @@ int mode_hv(const std::string& host, uint16_t port, double target, bool drop_int
     std::printf("       снимаю интерлок через %.1f с после начала разгона\n", ramp_s);
     ctrl.set_interlock_ready(false);  // ждёт остановки разгона, затем спускает и выключает ch1
     ramp.join();
-    step(!enable_result, "enable_channel(1) прервался", "разгон дошёл до цели, хотя интерлок сняли");
+    step(!enable_result, "enable_channel(1) прервался", [] { return std::string("разгон дошёл до цели, хотя интерлок сняли"); });
     print_poll(ctrl, "end");
     bool ch1_off = true;
     for (const auto& s : ctrl.poll())
         if (s.channel == 1 && s.output_enabled) ch1_off = false;
-    step(ch1_off, "ch1 выключен после снятия интерлока", "ch1 ОСТАЛСЯ ВКЛЮЧЁН");
+    step(ch1_off, "ch1 выключен после снятия интерлока", [] { return std::string("ch1 ОСТАЛСЯ ВКЛЮЧЁН"); });
     ctrl.disconnect();
     return (!enable_result && ch1_off) ? 0 : 1;
 }
