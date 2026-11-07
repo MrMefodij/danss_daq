@@ -4,6 +4,28 @@
 
 DANSS Slow Control is a multi-threaded, event-driven system for monitoring ~240 detector boards across 4-8 RS-485 branches.
 
+## Current state (November 2026)
+
+> The diagrams below are the original design (January 2025). What changed since then:
+
+- **Separate MIDAS programs on the TMFE API** (`tmfe.h`), not one `mfe.cxx` frontend:
+  `danss_psu_fe` (equipment `PowerSupply`, done) and a SlowControl frontend for the boards (next).
+  A failure in board polling does not affect HV control and vice versa.
+- **Board access layers:** `ModbusRTU` (framing by length, CRC, exceptions) →
+  `BoardClient` (`include/modbus/board_client.h`: register map v2, CSR commands, scratchpad
+  save/verify, DAC writes verified by readback, address assignment) →
+  `BoardRegistry` / `PeriodicPoller` (planned) → MIDAS equipment.
+- **Power supply layers:** `OwonPSU` (SCPI/TCP) → `PowerSupplyController` (thresholds with
+  readback, interlock, HV ramps, emergency off) → `PsuWorker` (own thread: a 1-minute HV ramp
+  never blocks the MIDAS loop; "off" and interlock drop abort a ramp) → `danss_psu_fe`
+  (ODB settings validated by `ConfigLoader`, `Enable[3]`, manual interlock, bank `PSUD`, alarms,
+  JRPC `emergency_shutdown`).
+- **Register map v2**, 38400 baud: [MODBUS_MAP_v2.md](MODBUS_MAP_v2.md). Board cycle ≈ 134 ms;
+  a board answers 28 registers in ≈ 25 ms, so a full poll of 30 boards per branch takes ≈ 2 s.
+- **Machines:** MIDAS server (ODB, mserver, mlogger, mhttpd) on the DAQ server; WFD frontend on
+  the VME crate controller cvme1; event builder on a separate server; SC on its own machine.
+- Details and decisions: [../PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md).
+
 ## High-Level Architecture
 
 ```

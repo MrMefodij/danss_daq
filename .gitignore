@@ -60,8 +60,16 @@ compile_commands.json
 
 # Executables built by this project (in case they land outside build/)
 danss_frontend
+danss_psu_fe
 modbus_scanner
+modbus_tool
+psu_bench
 test_owon_psu
+test_psu_worker
+test_config_loader
+
+# Board backups made by `modbus_tool sp-dump` (board-specific data)
+backup_*.json
 
 # Logs written at runtime (Logger -> danss_frontend.log)
 *.log

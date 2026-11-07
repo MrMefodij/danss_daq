@@ -1,252 +1,65 @@
-# Development TODO
+# План разработки
 
-## Phase 1: Core Infrastructure ✓
+Обновлено 07.11.2026. Подробный трекер с этапами s0–s6 — артефакт «План работ DANSS DAQ» в Claude;
+здесь — сводка по коду. Контекст и факты о железе — [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
 
-- [x] Project structure
-- [x] CMakeLists.txt configuration
-- [x] ModbusRTU class with Boost.Asio
-- [x] CRC16 implementation
-- [x] Common types and constants
-- [x] JSON configuration examples
-- [x] Configuration generator script
-- [x] Modbus scanner utility
-- [ ] Config loader implementation
-- [ ] Board registry class
-- [ ] Logger utility
+## Готово
 
-## Phase 2: RS-485 Management
+### Modbus и платы
+- [x] `ModbusRTU`: кадр по длине, `tcflush`, проверка ответа, исключения, статистика, проверки числа регистров
+- [x] Карта регистров v2 (`constants.h`, `types.h`: `BoardData`, `ScratchpadImage`, разбор битовых полей)
+- [x] Скорость 38400 по умолчанию (код, конфиги, документация)
+- [x] `BoardClient`: блоки регистров, `wait_next_cycle`, DAC с обратным чтением, CSR со статусом, scratchpad (сохранение с проверкой, загрузка, стирание), назначение адреса
+- [x] `modbus_scanner` (карта v2, ответ-исключение, адрес 247), `modbus_tool`
+- [x] Проверка на плате 17: вся карта, цикл 134 мс, scratchpad и автозагрузка при включении
+- [x] `tests/fake_modbus_slave.py` — имитатор платы по карте v2
 
-### High Priority
-- [ ] RS485BranchManager class
-  - [ ] Multi-threaded branch handling (one thread per branch)
-  - [ ] Thread-safe queue for read/write operations
-  - [ ] Automatic retry on communication errors
-  - [ ] Statistics collection per branch
+### Конфигурация
+- [x] `ConfigLoader`: три JSON, `ConfigError` с путём до поля, проверки безопасности PSU
+- [x] `config/board_map_stand.json`, `power_supply.json` с IP вместо `.local`
+- [x] `tests/test_config_loader.cpp` (в ctest)
 
-- [ ] BoardRegistry class
-  - [ ] Load configuration from JSON
-  - [ ] Board lookup by name/address/branch
-  - [ ] Board state tracking (online/offline/error)
-  - [ ] Last successful poll timestamp
+### Блок питания OWON ODP6033
+- [x] `OwonPSU`, `PowerSupplyController`: пороги с обратным чтением, интерлок, разгон/спуск, аварийное выключение, переподключение с проверкой порогов
+- [x] Управление выходами по каналам (`CHANnel:OUTPut:ALL`) — `OUTPut:STATe` переключает все каналы
+- [x] `psu_bench`; проверка на приборе без нагрузки (до 55 В)
+- [x] `PsuWorker` — поток управления, неблокирующие команды; `tests/test_psu_worker.cpp`
+- [x] `danss_psu_fe` (TMFE): ODB-настройки с проверкой, Enable, ручной интерлок, банк PSUD, алармы, JRPC `emergency_shutdown` — проверен на MIDAS c69c085 с эмулятором
 
-- [ ] PeriodicPoller class
-  - [ ] 5-minute polling cycle
-  - [ ] Configurable polling sequence
-  - [ ] Skip offline boards
-  - [ ] Collect all data into memory buffer
+## В работе / ближайшее
 
-### Medium Priority
-- [ ] DataCollector class
-  - [ ] Parse raw Modbus data into BoardData structures
-  - [ ] Apply calibrations (ADC → physical units)
-  - [ ] Detect anomalies (out-of-range values)
-  - [ ] Generate alarms
+- [ ] `danss_psu_fe` на cvme1 с реальным OWON
+- [ ] Сканирование стенда на 38400 (платы 1, 2)
+- [ ] Ответы Игоря (письмо 07.11.2026): признак подключённой аналоговой платы, единицы и пересчёт, раскладка каналов и битов, длительность 103/105, частота запросов
 
-## Phase 2b: Power Supply Control (OWON ODP6033)
+## Следующие шаги
 
-Slow control for the OWON ODP6033 (SCPI over TCP, port 3000): CH3 (0-6V/3A)
-feeds electronics boards at ~6V, CH1/CH2 (0-60V/3A each) feed SiPM HV
-(~55V), mapping is configurable via `config/power_supply.json`.
+### Опрос плат
+- [ ] `BoardRegistry`: платы из конфига, состояние (на связи / не отвечает / данные не обновляются / ошибка), счётчики ошибок, время последнего ответа
+- [ ] `PeriodicPoller`: поток на ветку, input 0–27 + holding 0–100, свежесть, перезагрузка платы (сброс счётчика), trip, сверка DAC
+- [ ] Функции с допущениями до ответа Игоря: `analog_board_present()`, `temperature_valid()` (0x8001), пересчёт единиц
+- [ ] Обработка ошибок: повторы, offline, CRC-серии, переоткрытие порта
 
-- [x] `OwonPSU` — low-level SCPI/TCP client (connect with bounded timeout,
-      channel select, voltage/current/OVP/OCP setters, measurement queries,
-      statistics) — `include/power/owon_psu.h`, `src/power/owon_psu.cpp`
-- [x] `PowerSupplyController` — policy layer: applies configured OVP/OCP at
-      startup, interlock-gated output enable, ramped HV enable/disable,
-      `emergency_shutdown()`, `poll()` — `include/power/power_controller.h`,
-      `src/power/power_controller.cpp`
-- [x] `PSUConfig`/`PSUChannelConfig`/`PSUChannelStatus` types (`types.h`),
-      PSU constants (`constants.h`), `config/power_supply.json` example
-- [x] CMakeLists.txt wiring (new sources into `danss_core`, include path)
-- [ ] `ConfigLoader::load_power_config()` — real JSON parsing (currently a
-      stub returning defaults, same status as `load_system_config()`)
-- [ ] Verify against the real OWON ODP6033 on the stand (`d2pwr1.danss.local:3000`):
-      `*IDN?`, channel select, voltage/current set, OVP/OCP set, measure
-      queries, ramp behavior — see checklist to be run on the stand
-- [ ] `power_equipment.cpp` — MIDAS "PowerSupply" Equipment wrapper (Phase 4,
-      alongside SlowControl/RunSync — stub in place with the planned interface
-      documented in the file)
-- [ ] Wire interlock: PowerSupplyController::set_interlock_ready() driven by
-      SlowControl's board-online tracking (design TBD — depends on
-      BoardRegistry, not yet implemented)
-- [ ] Decide/measure real ramp step & interval for SiPM HV (currently
-      placeholder defaults: 1V / 500-1000ms) — depends on SiPM bias
-      requirements, not yet confirmed with the group
+### SlowControl frontend (TMFE)
+- [ ] Equipment `SlowControl`: банки `BDAT`/`STAT`/`ALRM`, ODB, история, алармы
+- [ ] Интерлок HV от состояния плат (условия — решение группы до подключения SiPM)
 
-## Phase 3: EEPROM Management
+### Суточная сверка
+- [ ] ID термометров и CPU, scratchpad (сумма 0xAA55), сравнение с эталоном и уставками; восстановление 103 → 105
 
-- [ ] EEPROMManager class
-  - [ ] Read thermometer IDs (registers 100-147)
-  - [ ] Read CPU IDs (registers 148-149)
-  - [ ] Parse 1-Wire IDs from register data
-  
-- [ ] EEPROMValidator class
-  - [ ] Load reference data from JSON
-  - [ ] Daily verification cycle
-  - [ ] Compare current vs reference
-  - [ ] Generate mismatch reports
-  - [ ] Auto-correction capability (write back correct values)
+### Режимы и ран
+- [ ] `RunStateMachine`: STOPPED / PHYSICS / CALIBRATION / MAINTENANCE; согласованные переходы DAQ и SC
+- [ ] Автоматический цикл калибровки (открытый вопрос 6)
 
-## Phase 4: MIDAS Integration
+### Блок питания
+- [ ] Проверка на нагрузке (SiPM); согласовать скорость нарастания HV (сейчас 1 В / 1000 мс)
+- [ ] Напряжение в `Readback` во время разгона
+- [ ] Удалить заглушку `src/power/power_equipment.cpp`
 
-### Frontend Structure
-- [ ] MIDAS frontend main.cpp
-  - [ ] Initialize MIDAS connection
-  - [ ] Create equipment instances
-  - [ ] Handle run transitions
-  
-- [ ] SlowControl Equipment
-  - [ ] periodic_event() for 5-min polling
-  - [ ] read_event() to fill MIDAS banks
-  - [ ] Bank structure for board data
-  - [ ] ODB integration for settings
-  
-- [ ] RunSync Equipment
-  - [ ] Monitor run state changes
-  - [ ] Coordinate Calibration ↔ Physics transitions
-  - [ ] Ensure all boards are synchronized
+### WFD / DAQ
+- [ ] MIDAS c69c085 на DAQ-сервере (с ROOT)
+- [ ] WFD frontend на cvme1 (на основе `uwfd64`), event builder на отдельном сервере
 
-### State Machine
-- [ ] RunStateMachine class
-  - [ ] States: STOPPED, PHYSICS_RUN, CALIBRATION_RUN, MAINTENANCE
-  - [ ] Transition validation
-  - [ ] Transition callbacks
-  - [ ] Error recovery
-
-### Alarms
-- [ ] MIDAS alarm integration
-  - [ ] Trip status alarms
-  - [ ] Temperature threshold alarms
-  - [ ] Communication failure alarms
-  - [ ] EEPROM mismatch alarms
-  
-- [ ] Alarm manager
-  - [ ] Rate limiting (prevent alarm storms)
-  - [ ] Alarm aggregation (combine similar alarms)
-  - [ ] Alarm history
-
-## Phase 5: Advanced Features
-
-### Error Recovery
-- [ ] Automatic board reset on persistent errors
-- [ ] Board re-initialization after power cycle
-- [ ] Graceful degradation (continue with remaining boards)
-- [ ] Error log analysis
-
-### Logging & Diagnostics
-- [ ] Structured logging (spdlog or similar)
-  - [ ] Log levels (DEBUG, INFO, WARNING, ERROR)
-  - [ ] Log rotation
-  - [ ] Separate logs per branch
-  
-- [ ] Diagnostics tools
-  - [ ] Real-time statistics dashboard
-  - [ ] Communication quality metrics
-  - [ ] Board health indicators
-
-### Telegram Notifications
-- [ ] Telegram bot integration
-  - [ ] Critical alarm notifications
-  - [ ] Status queries via bot commands
-  - [ ] Remote control (start/stop polling)
-  
-- [ ] Notification manager
-  - [ ] Configurable notification rules
-  - [ ] User subscription management
-
-### Performance Optimization
-- [ ] Batch register reads (read multiple registers in one transaction)
-- [ ] Adaptive polling (skip stable boards more often)
-- [ ] Connection pooling (keep serial ports open)
-- [ ] Memory pool for BoardData structures
-
-### Web Interface (Optional)
-- [ ] REST API for status queries
-- [ ] Real-time WebSocket updates
-- [ ] Board configuration editor
-- [ ] Historical data viewer
-
-## Phase 6: Testing
-
-### Unit Tests
-- [ ] ModbusRTU tests
-  - [ ] CRC calculation
-  - [ ] Frame building
-  - [ ] Response parsing
-  
-- [ ] Configuration loader tests
-- [ ] Board registry tests
-- [ ] State machine tests
-
-### Integration Tests
-- [ ] Modbus simulator (fake boards)
-- [ ] End-to-end polling test
-- [ ] EEPROM validation test
-- [ ] State transition test
-
-### Hardware Tests
-- [ ] Single board communication
-- [ ] Full branch (60 boards) stress test
-- [ ] All branches (240 boards) stress test
-- [ ] Long-duration stability test (24+ hours)
-
-## Documentation
-
-- [x] README.md
-- [x] BUILD.md
-- [ ] ARCHITECTURE.md (system design document)
-- [ ] API.md (class interfaces)
-- [ ] PROTOCOL.md (Modbus register map details)
-- [ ] OPERATIONS.md (run procedures, troubleshooting)
-- [ ] Doxygen configuration
-- [ ] Code comments
-
-## Code Quality
-
-- [ ] clang-format configuration
-- [ ] clang-tidy checks
-- [ ] Address sanitizer testing
-- [ ] Thread sanitizer testing
-- [ ] Valgrind memory leak checks
-- [ ] Static analysis (cppcheck)
-
-## Deployment
-
-- [ ] systemd service file
-- [ ] Startup/shutdown scripts
-- [ ] Log rotation configuration
-- [ ] Monitoring integration (Nagios/Prometheus)
-- [ ] Backup scripts for configuration
-
-## Future Enhancements
-
-- [ ] Support for different board firmware versions
-- [ ] Hot-swap board replacement
-- [ ] Remote firmware updates
-- [ ] Machine learning for anomaly detection
-- [ ] Automatic calibration drift compensation
-- [ ] Historical data analysis tools
-
----
-
-## Priority Order
-
-1. **Immediate (this week)**
-   - Config loader
-   - Board registry
-   - RS485 manager skeleton
-
-2. **Short-term (this month)**
-   - Periodic poller
-   - EEPROM manager
-   - Basic MIDAS frontend
-
-3. **Medium-term (this quarter)**
-   - Full MIDAS integration
-   - State machine
-   - Alarms
-
-4. **Long-term (ongoing)**
-   - Performance optimization
-   - Advanced features
-   - Documentation
+### Прочее
+- [ ] Telegram-уведомления об алармах
+- [ ] Документация пользователя для операторов стенда

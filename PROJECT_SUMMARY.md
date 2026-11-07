@@ -1,5 +1,11 @@
 # DANSS Slow Control Project - Summary
 
+> **Исторический документ** — сводка исходного проекта (январь 2025). Актуальное состояние,
+> решения и факты о железе — [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), план — [TODO.md](TODO.md)
+> (обновлено 07.11.2026). С тех пор: карта регистров v2 и скорость 38400, `BoardClient` и
+> `modbus_tool`, `ConfigLoader`, блок питания OWON и MIDAS frontend `danss_psu_fe`.
+
+
 ## Project Created: 2025-01-18
 
 ### What Was Created

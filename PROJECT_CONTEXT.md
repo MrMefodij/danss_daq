@@ -2,6 +2,7 @@
 
 > Этот файл предназначен для переноса контекста в новый чат.
 > Вставьте его целиком (или приложите файлом) в начало нового диалога.
+> Обновлён 07.11.2026.
 
 ---
 
@@ -12,132 +13,121 @@
 > «Продолжаем работу над проектом DANSS Slow Control. Ниже — полный контекст проекта.
 > Текущая задача: <опишите задачу>.»
 
-и приложите этот файл + архив `danss-slow-control.tar.gz`.
+и приложите этот файл. Код — в репозитории **https://github.com/MrMefodij/danss_daq.git**,
+рабочая ветка **`mkolupanova-tests`** (Мария Колупанова + наши правки). Карта регистров
+плат — [doc/MODBUS_MAP_v2.md](doc/MODBUS_MAP_v2.md); утилита для одной платы —
+[doc/MODBUS_TOOL.md](doc/MODBUS_TOOL.md).
 
 ---
 
 ## 1. О проекте
 
 **Название:** DANSS Slow Control & DAQ Server
-**Назначение:** система медленного контроля и сбора данных для детектора DANSS на базе фреймворка MIDAS.
-**Язык:** C++17
-**Платформа:** Linux (Ubuntu 22.04/24.04, GCC 11+)
+**Назначение:** медленный контроль (платы электроники SiPM, блок питания) и сбор данных
+для тестового стенда ДАНСС-2 и детектора DANSS на базе MIDAS.
+**Язык:** C++17 (код SC); MIDAS собран как C++20.
+**Платформы:** Linux (cvme1 — Linux Mint 19.1, тулчейн conda GCC 13; лабораторный сервер —
+Fedora 33); разработка и проверка с одной платой — macOS.
 
 ### Требования
 
 | Параметр | Значение |
 |---|---|
-| Веток RS-485 | 4–8 (USB-RS485 адаптеры `/dev/ttyUSB0..7`) — в проектных документах; **на реальном тестовом стенде ДАНСС-2 сейчас используется `/dev/ttyACM3`** (см. §13) |
-| Плат всего | ~240 (~30 на ветку) в целевой конфигурации; **на тестовом стенде сейчас реально подключено 2 платы (адреса 1 и 2)** |
-| Период опроса | 5 минут |
-| Что опрашивается | токи утечки SiPM, температуры, состояния, срабатывания авто-отключения |
-| EEPROM | платы хранят настройки; при старте считать и сверить; раз в сутки контролировать расхождения |
-| Синхронизация | жёсткая синхронизация DAQ/SlowControl при переключении Calibration ↔ Physics Run |
+| Веток RS-485 | 4–8 в целевой конфигурации; **на стенде ДАНСС-2 — одна, `/dev/ttyACM3` на cvme1** |
+| Плат всего | ~240 (~30 на ветку) в целевой конфигурации; на стенде — процессорные платы 1, 2 (3 запрограммирована) |
+| Период опроса | 5 минут (платы), 10 с (блок питания) |
+| Что опрашивается | токи утечки SiPM, температуры, статус HV и trip, уставки DAC и их обратное чтение |
+| Энергонезависимая память | scratchpad платы (512 слов, сумма 0xAA55); суточная сверка с эталоном |
+| Синхронизация | DAQ/SlowControl при переключении Calibration ↔ Physics Run |
 
 ### Технологический стек
 
-- **MIDAS 2.1** (`mfe.cxx` / `mfe.h` framework), у пользователя собран в `~/work/danss/packages/midas`
-- **Boost.Asio 1.83** — асинхронный I/O, serial port
-- **nlohmann/json 3.11.2** — подтягивается через CMake FetchContent
-- **CMake 3.12+**
+- **MIDAS, коммит `c69c0853930b226e96090725a0ba5cb2b4293a14`** — один и тот же на всех машинах.
+  Frontend'ы — на современном C++ API **TMFE** (`tmfe.h`), не на старом `mfe.cxx`.
+- **Boost.Asio** (serial port, TCP) — 1.83 (Ubuntu 24.04 / conda на cvme1)
+- **nlohmann/json** — FetchContent v3.12.0 (или из conda/Homebrew для ручной сборки)
+- **CMake 3.16+**
 
 ---
 
-## 2. Протокол — Modbus RTU over RS-485
+## 2. Протокол плат — Modbus RTU over RS-485
 
-**Параметры порта:** 38400 бод (прошивка v2, проверено на плате 17 07.11.2026; раньше было 19200), 8 данных, без чётности, 1 стоп-бит, без flow control.
+**Параметры порта: 38400 бод, 8N1, без flow control — на всех платах, включая стенд**
+(подтверждено 07.11.2026; в сентябре прошивка была на 19200). `DEFAULT_BAUD_RATE = 38400`.
 
-> Подтверждено разработчиком прошивки плат (Игорь), сентябрь 2026: скорость пока жёстко задана 19200 в прошивке, в дальнейшем планируется регистр для выбора скорости.
-
-### Функции
-
-| Код | Функция |
-|---|---|
-| `0x03` | Read Holding Registers |
-| `0x04` | Read Input Registers |
-| `0x06` | Write Single Register |
-| `0x10` | Write Multiple Registers |
+Функции: `0x03` Read Holding, `0x04` Read Input, `0x06` Write Single, `0x10` Write Multiple.
 
 ### Карта регистров — версия 2 (октябрь 2026)
 
-Полная карта, scratchpad и открытые вопросы: [doc/MODBUS_MAP_v2.md](doc/MODBUS_MAP_v2.md).
-На одну процессорную плату — 3 аналоговые платы, 12 каналов SiPM.
+Полная карта, scratchpad, результаты проверки и открытые вопросы:
+[doc/MODBUS_MAP_v2.md](doc/MODBUS_MAP_v2.md). На одну процессорную плату — 3 аналоговые
+платы, 12 каналов SiPM.
 
-**Input-регистры (read-only)**
+**Input-регистры:** 0 счётчик обновлений · 1 статус HV `0ttt eeee eeee eeee` (trip по
+аналоговой плате, HV по каналу) · 2 `0000 0rrr 0000 0aaa` (разрешение trip, усиление) ·
+3–14 токи · 15–26 температуры · 27 температура CPU · 28–99 резерв · 100–147 ID термометров
+(12 × 4) · 148–149 CPU ID · 150–245 обратное чтение DAC · 246 смещение датчика CPU ·
+250–761 обратное чтение scratchpad.
 
-| Адрес | Содержимое |
+**Holding-регистры:** 0–95 DAC · 96 SiPM HV enable (= «Counter ON/OFF») · 97 усиление и
+разрешение trip · 98 Global CSR (101 загрузить / 103 стереть / 105 сохранить scratchpad;
+статус 0 / 10 / 20) · 99 задержка между циклами · 100 адрес (только с заводского 247,
+действует сразу после сохранения).
+
+### Что известно о прошивке (проверено и подтверждено)
+
+| Факт | Источник |
 |---|---|
-| 0 | Порядковый номер обновления (растёт в конце каждого цикла) |
-| 1 | Статус HV: `0ttt eeee eeee eeee` — trip по аналоговой плате, HV по каналу |
-| 2 | `0000 0rrr 0000 0aaa` — разрешение trip и усиление по аналоговой плате |
-| 3–14 | Токи утечки SiPM (12 каналов) |
-| 15–26 | Температуры SiPM (12 каналов) |
-| 27 | Температура CPU |
-| 100–147 | ID термометров 1-Wire (12 × 4 регистра) |
-| 148–149 | CPU ID |
-| 150–245 | Обратное чтение DAC |
-| 246 | Смещение датчика температуры CPU |
-| 250–761 | Обратное чтение scratchpad (512 слов, сумма = 0xAA55) |
+| 38400 8N1 на всех платах | Александр, 07.11.2026 |
+| Цикл платы ≈ 134 мс при задержке 0; счётчик 16 бит (переполнение ≈ раз в 2.4 ч) | плата 17 |
+| Ответ на чтение 28 регистров ≈ 25 мс | плата 17 |
+| Стирание + сохранение scratchpad работают, сумма 0xAA55 сходится | плата 17 |
+| Scratchpad загружается в рабочие регистры сам при включении питания | плата 17 |
+| Holding 96 — HV enable; адрес действует сразу; резерв с 28 | Александр |
+| Без аналоговых плат: обратное чтение DAC = 0, температуры 0x8001, ID термометров 0 | плата 17 |
 
-**Holding-регистры (read/write)**
+Открыто (письмо Игорю 07.11.2026): признак «аналоговая плата подключена», единицы и
+пересчёт токов/температур/CPU, раскладка каналов и битов по аналоговым платам, длительность
+103/105, ограничения на частоту запросов.
 
-| Адрес | Содержимое |
-|---|---|
-| 0–95 | Настройки DAC (96 каналов) |
-| 96 | Counter ON/OFF (SiPM HV enable), бит на канал |
-| 97 | Усиление и разрешение trip, бит на аналоговую плату |
-| 98 | Global CSR: команды 101 загрузить / 103 стереть / 105 сохранить scratchpad; статус 0 / 10 / 20 |
-| 99 | Задержка между циклами |
-| 100 | Адрес устройства (только с заводского 247) |
+### Тайминги
 
-### Тайминги (расчёт)
-
-- Одна транзакция ≈ 35–85 мс на 19200 бод
-- Одна плата (2 транзакции: input + holding) ≈ 85 мс
-- Ветка (30 плат, последовательно) ≈ 2.8 с
-- Все 8 веток параллельно ≈ < 3 с
-- **Запас по времени: ~100× относительно 5-минутного цикла**
-
-Чтение EEPROM (48 + 2 регистра) ≈ 95 мс на плату, все 240 плат ≈ < 3 с.
+- Одна транзакция на 38400: ≈ 25 мс на 28 регистров (измерено), ≈ 40–60 мс на 101–125
+- Плата (input 0–27 + holding 0–100) ≈ 70 мс; ветка из 30 плат ≈ 2 с; 8 веток параллельно ≈ 2 с
+- Запас ≈ 150× относительно 5-минутного цикла
 
 ---
 
 ## 3. Архитектура
 
+Решения — в [doc/ARCHITECTURE_DECISIONS.md](doc/ARCHITECTURE_DECISIONS.md) (Р1–Р11).
+
 ```
-┌─────────────────────────────────────────┐
-│         MIDAS DAQ (ODB, mlogger, mhttpd)│
-└───────────────┬─────────────────────────┘
-                │
-     ┌──────────▼───────────┐
-     │  danss_frontend      │
-     │  ├ SlowControl Equip │  ← read_event() каждые 5 мин
-     │  └ RunSync Equipment │  ← переходы режимов
-     └──────────┬───────────┘
-                │
-     ┌──────────▼───────────┐
-     │  RS485BranchManager  │  ← 4–8 потоков, по одному на ветку
-     └──────────┬───────────┘
-                │
-     ┌──────────▼───────────┐
-     │  BoardRegistry       │  ← 240 плат, состояния, EEPROM-эталоны
-     └──────────┬───────────┘
-                │
-   ┌────────────┼────────────┬─────────┐
-┌──▼──┐      ┌──▼──┐      ┌──▼──┐   ┌──▼──┐
-│ttyUSB0│    │ttyUSB1│    │ttyUSB2│  │ ... │
-│ModbusRTU│  │ModbusRTU│  │ModbusRTU│ │     │
-└──┬──┘      └──┬──┘      └──┬──┘   └─────┘
-   │            │            │
-  ~30 плат    ~30 плат     ~30 плат
+┌──────────────────────────────────────────────────────────┐
+│  DAQ-сервер: MIDAS (ODB, mserver, mlogger, mhttpd)       │
+└──────▲──────────────────────▲────────────────────────▲───┘
+       │ TCP 1175 (mserver)   │                        │
+┌──────┴──────────┐  ┌────────┴───────────┐  ┌─────────┴─────────┐
+│ danss_psu_fe    │  │ SlowControl FE     │  │ WFD frontend      │
+│ (готов)         │  │ (следующий шаг)    │  │ (cvme1, позже)    │
+│ PsuWorker       │  │ PeriodicPoller     │  │                   │
+│ PowerSupplyCtrl │  │ BoardRegistry      │  │                   │
+│ OwonPSU (SCPI)  │  │ BoardClient        │  │                   │
+└──────┬──────────┘  │ ModbusRTU          │  └───────────────────┘
+       │ TCP 3000    └────────┬───────────┘
+   OWON ODP6033               │ RS-485, 38400
+   192.168.10.81          платы (адреса 1…246)
 ```
 
-### Модель многопоточности
-
-- Главный поток координирует циклы опроса
-- Один рабочий поток на ветку RS-485 (свой `ModbusRTU`, свой `io_context`)
-- Общий буфер данных под read-write lock
-- Очередь алармов под mutex
+- **Отдельные программы** для блока питания и для плат (решение 11.2026): сбой опроса плат
+  не мешает управлению HV и наоборот.
+- **Слои Modbus:** `ModbusRTU` (кадры, CRC, таймауты) → `BoardClient` (карта v2, процедуры:
+  CSR, scratchpad, DAC с проверкой, адрес) → `BoardRegistry`/`PeriodicPoller` (состояние
+  плат, расписание, алармы) → MIDAS equipment.
+- **Слои блока питания:** `OwonPSU` (SCPI/TCP) → `PowerSupplyController` (политика: пороги,
+  разгон, интерлок) → `PsuWorker` (свой поток: долгие разгоны не блокируют MIDAS) →
+  `danss_psu_fe` (TMFE, ODB, история, алармы).
+- Модель многопоточности опроса плат: поток на ветку RS-485, общий снимок под мьютексом.
 
 ### State Machine (режимы)
 
@@ -146,564 +136,347 @@ STOPPED ⇄ PHYSICS_RUN ⇄ CALIBRATION_RUN
    └──────── MAINTENANCE
 ```
 
-Правила переходов:
-1. **STOPPED → PHYSICS** — проверить, что все платы онлайн, загрузить DAC, включить HV
-2. **PHYSICS → CALIBRATION** — дождаться паузы, переставить DAC на калибровочные значения, включить LED-пульсер
-3. **CALIBRATION → PHYSICS** — восстановить физические DAC, выключить пульсер
-4. **ANY → STOPPED** — выключить HV, сохранить состояние, закрыть связь
+Автоматический цикл калибровки (калибровочный ран → подбор gain/HV → физика) — открытый
+вопрос 6 в [doc/ARCHITECTURE_DECISIONS.md](doc/ARCHITECTURE_DECISIONS.md).
 
 ---
 
 ## 4. Структура проекта
 
 ```
-danss-slow-control/
-├── CMakeLists.txt                    ✅ готово
-├── README.md                         ✅
-├── QUICKSTART.md                     ✅
-├── TODO.md                           ✅ план разработки
-├── PROJECT_SUMMARY.md                ✅
-├── BUGFIXES.md                       ✅ история исправлений
-├── PROJECT_CONTEXT.md                ← этот файл
-├── .gitignore                        ✅
-│
+danss_daq/
+├── CMakeLists.txt                ✅ danss_core + danss_frontend, modbus_scanner, modbus_tool, danss_psu_fe
+├── PROJECT_CONTEXT.md            ← этот файл
+├── README.md, QUICKSTART.md, TODO.md, PROJECT_SUMMARY.md (история), CONDA_GCC_INSTALLATION.md
 ├── config/
-│   ├── board_map.json                ✅ пример (5 плат)
-│   ├── eeprom_reference.json         ✅ пример (5 плат)
-│   └── generate_full_config.py       ✅ генератор на 240 плат
-│
+│   ├── board_map.json            ✅ пример (2 ветки)
+│   ├── board_map_stand.json      ✅ стенд: /dev/ttyACM3, платы 1, 2, (3 выключена)
+│   ├── eeprom_reference.json     ✅ пример эталонов
+│   ├── power_supply.json         ✅ OWON: 192.168.10.81, ch3 CPU 6 В, ch1 HV 55 В
+│   └── generate_full_config.py   ✅ генератор на 240 плат
 ├── doc/
-│   ├── BUILD.md                      ✅
-│   ├── ARCHITECTURE.md               ✅
-│   ├── MODBUS_SCANNER.md             ✅
-│   ├── SCANNER_CHEATSHEET.md         ✅
-│   └── SCANNER_OUTPUT_EXAMPLES.md    ✅
-│
+│   ├── ARCHITECTURE_DECISIONS.md ✅ журнал решений Р1–Р11
+│   ├── MODBUS_MAP_v2.md          ✅ карта регистров, проверка на плате 17, вопросы Игорю
+│   ├── MODBUS_TOOL.md            ✅ утилита одной платы, план проверки
+│   ├── ARCHITECTURE.md, BUILD.md, MODBUS_SCANNER.md, SCANNER_*.md
 ├── include/
-│   ├── common/
-│   │   ├── types.h                   ✅ BoardData, SystemConfig, BranchConfig, RunMode, Alarm
-│   │   ├── constants.h               ✅ карта регистров, коды функций, пороги
-│   │   ├── logger.h                  ✅
-│   │   └── config_loader.h           ⚠️ заглушка (объявления есть, реализации нет)
-│   └── modbus/
-│       └── modbus_rtu.h              ✅
-│
+│   ├── common/   types.h, constants.h, logger.h, config_loader.h          ✅
+│   ├── modbus/   modbus_rtu.h, board_client.h                              ✅
+│   └── power/    owon_psu.h, power_controller.h, psu_worker.h              ✅
 ├── src/
-│   ├── frontend/
-│   │   ├── main.cpp                  ✅ CLI, --test-modbus, --standalone
-│   │   └── equipment.cpp             ⚠️ заглушка
-│   ├── modbus/
-│   │   ├── modbus_rtu.cpp            ✅ РАБОТАЕТ
-│   │   └── modbus_crc.cpp            ✅ CRC16 с lookup-таблицей
-│   ├── utils/
-│   │   ├── logger.cpp                ✅
-│   │   ├── config_loader.cpp         ⚠️ заглушка (возвращает дефолты)
-│   │   └── modbus_scanner.cpp        ✅ отдельная утилита
-│   ├── rs485/
-│   │   ├── rs485_manager.cpp         ⏳ TODO (пустой)
-│   │   └── board_registry.cpp        ⏳ TODO (пустой)
-│   ├── eeprom/
-│   │   ├── eeprom_manager.cpp        ⏳ TODO (пустой)
-│   │   └── eeprom_validator.cpp      ⏳ TODO (пустой)
-│   ├── slowcontrol/
-│   │   ├── periodic_poller.cpp       ⏳ TODO (пустой)
-│   │   └── data_collector.cpp        ⏳ TODO (пустой)
-│   ├── sync/
-│   │   └── state_machine.cpp         ⏳ TODO (пустой)
-│   └── power/
-│       ├── owon_psu.cpp              ✅ готово — SCPI/TCP клиент OWON ODP6033
-│       ├── power_controller.cpp      ✅ готово — политика (OVP/OCP, ramp, интерлок)
-│       └── power_equipment.cpp       ⚠️ заглушка (MIDAS Equipment, Фаза 4)
-│
-└── tests/                            ⏳ TODO (пусто)
+│   ├── modbus/   modbus_rtu.cpp, modbus_crc.cpp, board_client.cpp          ✅ проверены на плате 17
+│   ├── utils/    logger.cpp, config_loader.cpp, modbus_scanner.cpp, modbus_tool.cpp ✅
+│   ├── power/    owon_psu.cpp, power_controller.cpp, psu_worker.cpp        ✅ проверены на OWON
+│   │             power_equipment.cpp                                       ⚠️ заглушка, можно удалить
+│   ├── frontend/ psu_frontend.cxx (danss_psu_fe)                           ✅ проверен в облаке на MIDAS
+│   │             main.cpp (--test-modbus, --standalone)                    ✅
+│   │             equipment.cpp                                             ⏳ заглушка
+│   ├── rs485/    rs485_manager.cpp, board_registry.cpp                     ⏳ пусто — следующий шаг
+│   ├── slowcontrol/ periodic_poller.cpp, data_collector.cpp                ⏳ пусто — следующий шаг
+│   ├── eeprom/   eeprom_manager.cpp, eeprom_validator.cpp                  ⏳ пусто
+│   └── sync/     state_machine.cpp                                         ⏳ пусто
+└── tests/
+    ├── CMakeLists.txt            ✅ (cmake -DBUILD_TESTS=ON)
+    ├── test_config_loader.cpp    ✅ 42 проверки, в ctest
+    ├── test_psu_worker.cpp       ✅ 26 проверок против mock
+    ├── test_owon_psu.cpp         ✅ 20 проверок против mock (на приборе НЕ запускать: 55 В)
+    ├── psu_bench.cpp             ✅ пошаговая проверка OWON на стенде
+    ├── mock_owon_server.py       ✅ эмулятор OWON (семантика выходов как у прибора)
+    └── fake_modbus_slave.py      ✅ имитатор платы по карте v2 (pty)
 ```
-
-Соответствующие заголовки: `include/power/owon_psu.h`, `include/power/power_controller.h`.
-Пример конфига: `config/power_supply.json`.
-
-**Цели сборки:** статическая библиотека `danss_core`, исполняемые `danss_frontend` и `modbus_scanner`.
 
 ---
 
-## 5. Текущее состояние
+## 5. Текущее состояние (07.11.2026)
 
-### ✅ Фаза 1 — готово
+### ✅ Готово и проверено на железе
 
-- Структура проекта, CMake (MIDAS + Boost + FetchContent nlohmann/json)
-- **ModbusRTU** — полностью рабочий класс: все 4 функции, CRC16, таймауты, статистика, thread-safe
-- Типы данных и константы (вся карта регистров)
-- Logger (уровни, файл, макросы `LOG_INFO` и т.д.)
-- **modbus_scanner** — утилита сканирования шины
-- Примеры JSON-конфигов + генератор на 240 плат
-- Документация (~40 страниц)
+- **ModbusRTU**: конец кадра по длине из кода функции, очистка входного буфера перед
+  запросом, проверка адреса/кода функции/числа регистров/эха записи, ответ-исключение
+  (5 байт), раздельная статистика; проверки числа регистров в рантайме (не `assert`).
+- **Карта регистров v2** в `constants.h`/`types.h` (`BoardData`, `ScratchpadImage`).
+- **BoardClient + modbus_tool** — на плате 17: вся карта, цикл, CSR, scratchpad, перезагрузка.
+- **modbus_scanner** — карта v2, плата с ответом-исключением показывается как «answered
+  with error», заводской адрес 247 помечается.
+- **ConfigLoader** — разбор трёх JSON с проверками и сообщениями «файл: путь.до.поля: что не так».
+- **Блок питания** (OwonPSU, PowerSupplyController) — на приборе без нагрузки: пороги с
+  обратным чтением, отказ HV без интерлока и без питания электроники, разгон 0→55 В и
+  спуск, снятие интерлока во время разгона.
 
-### 🚧 Фаза 2 — следующая (Modbus-часть не начата; PSU-часть — см. ниже)
+### ✅ Готово, проверено без железа
 
-- `ConfigLoader` — реальный парсинг JSON через nlohmann/json (сейчас возвращает дефолты, включая новый `load_power_config()`)
-- `BoardRegistry` — загрузка 240 плат, поиск по имени/адресу/ветке, трекинг состояния online/offline/error
-- `RS485BranchManager` — multi-threading, по потоку на ветку, retry, статистика
-- `PeriodicPoller` — цикл 5 минут, параллельный опрос веток
-- `DataCollector` — парсинг сырых регистров в `BoardData`, калибровки, детект аномалий
+- **danss_psu_fe + PsuWorker** — на MIDAS c69c085 в облаке с эмулятором OWON: ODB-настройки
+  с проверкой, Enable/интерлок, отклонение недопустимых настроек, новая цель для включённого
+  канала, JRPC `emergency_shutdown` во время разгона, перезапуск без переключения выходов.
+  **На cvme1 и с реальным OWON ещё не запускался.**
 
-**Управление блоком питания OWON ODP6033 — отдельный подтрек Фазы 2, код готов** (см. §15):
-`OwonPSU` (SCPI/TCP-клиент) и `PowerSupplyController` (политика: OVP/OCP, плавный
-разгон HV, интерлок, аварийное отключение) написаны и синтаксически проверены.
-Не сделано: реальный парсинг `power_supply.json` в `ConfigLoader`, проверка на
-реальном блоке на стенде, интеграция интерлока с `BoardRegistry` (которого еще нет),
-MIDAS-обвязка (`power_equipment.cpp`, Фаза 4).
+### 🚧 Следующие шаги
 
-### 📋 Фаза 3 — потом
-
-- `EEPROMManager` / `EEPROMValidator` — суточная сверка, отчёты о расхождениях, авто-восстановление
-- MIDAS-интеграция: `SlowControlEquipment`, `RunSyncEquipment`, банки (`BDAT`, `STAT`, `ALRM`), ODB
-- `RunStateMachine` — переходы Calibration ↔ Physics
-- Алармы MIDAS (заготовка под Telegram)
-
-### 📋 Фаза 4+ — error recovery, логирование, Telegram, unit-тесты, оптимизация
+1. `BoardRegistry` + `PeriodicPoller` на `BoardClient` (состояния плат, свежесть,
+   перезагрузка платы, trip, сверка DAC только для подключённых аналоговых плат).
+2. SlowControl frontend (TMFE), банки, ODB, алармы; интерлок HV от состояния плат.
+3. `danss_psu_fe` на cvme1 с реальным OWON.
+4. Сканирование стенда на 38400 (2 ноября не ответила ни одна плата — сканировали на 19200).
+5. Суточная сверка scratchpad/ID с эталоном; state machine ранов; WFD frontend.
 
 ---
 
 ## 6. Ключевые технические решения и подводные камни
 
-### ⚠️ Boost.Asio serial_port НЕ имеет метода `available()`
-
-Это метод сокетов. Для serial port нужен другой подход. **Текущая реализация `transact()` использует POSIX `select()`** на дескрипторе, полученном через `serial_port_->native_handle()`:
-
-```cpp
-#ifdef __linux__
-#include <sys/select.h>
-#include <unistd.h>
-#endif
-
-int fd = serial_port_->native_handle();
-fd_set read_fds;
-FD_ZERO(&read_fds);
-FD_SET(fd, &read_fds);
-
-struct timeval tv;
-tv.tv_sec  = remaining_ms / 1000;
-tv.tv_usec = (remaining_ms % 1000) * 1000;
-
-int ret = select(fd + 1, &read_fds, NULL, NULL, &tv);
-if (ret > 0) {
-    // данные есть — читаем побайтно, затем ждём T3.5 и дочитываем хвост
-} else if (ret == 0) {
-    // таймаут
-}
-```
-
-### ⚠️ Нельзя использовать блокирующий `boost::asio::read` с `transfer_at_least`
-
-Первая версия зависала намертво при отсутствии ответа платы (при сканировании несуществующих адресов). Именно поэтому и появился `select()`.
-
-### Определение границы фрейма Modbus RTU
-
-После получения минимального фрейма (4 байта) ждём `T3.5` (≈1.75 мс на 19200 бод), затем проверяем, не пришло ли ещё данных. Если нет — фрейм считается завершённым.
-
-### CRC16
-
-Modbus-полином `0xA001`, реализован через lookup-таблицу на 256 записей в `modbus_crc.cpp`. Передаётся **LSB первым**.
-
-### Заголовки, которых легко не хватает
-
-- `constants.h` → нужен `#include <cstddef>` (для `size_t`)
-- `config_loader.h` → нужен `#include <map>`
-- `main.cpp` → нужны `#include <thread>` и `#include <chrono>`
+- **Boost.Asio serial_port не имеет `available()`** — ожидание ответа через `select()` на
+  `native_handle()`. Блокирующий `boost::asio::read` с `transfer_at_least` подвисал при
+  отсутствии ответа.
+- **Граница кадра Modbus RTU** определяется по длине (из кода функции и байта счёта), а не
+  по паузе T3.5: USB-RS485 адаптеры доставляют байты пачками. Перед отправкой — `tcflush`.
+- **CRC16**: полином `0xA001`, lookup-таблица, LSB первым.
+- **OWON ODP6033 (FV V3.10.0):**
+  - `OUTPut:STATe 0|1` включает/выключает **все каналы сразу**, `INST:NSEL` на неё не влияет;
+    по одному каналу — только `CHANnel:OUTPut:ALL a,b,c` (и запрос `CHAN:OUTP:ALL?` → `1, 0, 1`).
+    Ошибку нашёл реальный прибор: включение ch3 включало ch1 (HV) без интерлока.
+  - `VOLT:LIM?` / `CURR:LIM?` поддерживаются (обратное чтение OVP/OCP); OCP максимум 3.1 А.
+  - На cvme1 Boost.Asio не разрешает имя `d2pwr1.danss.local` — в конфигах IP.
+- **MIDAS `Msg(MINFO, ...)`**: `MINFO`/`MERROR` — макросы с `__FILE__, __LINE__`; в тернарный
+  оператор их не подставлять.
+- **libmfe.a** приносит второй `main()` — `danss_frontend` линкуется только с `midas::midas`.
+- **`danss::log`** переименован в `danss::logging`: имя `log` перекрывало `::log()` из `<cmath>`.
+- В скриптах не использовать `pkill -f <имя>` — убивает и сам скрипт; `pkill -x <процесс>`.
 
 ---
 
 ## 7. Сборка и запуск
 
-### Сборка
+### Сборка (CMake)
 
 ```bash
-export MIDASSYS=/home/amefodev/work/danss/packages/midas
-export MIDAS_EXPTAB=/etc/exptab
-
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
+export MIDASSYS=<путь к MIDAS c69c085>   # cvme1: ~/daq/packages/midas
+mkdir -p build && cd build
+cmake -DBUILD_TESTS=ON ..
+make -j4 && ctest
 ```
 
-Выход: `build/bin/danss_frontend`, `build/bin/modbus_scanner`, `build/lib/libdanss_core.a`.
+Цели: `danss_core` (статическая), `danss_frontend`, `modbus_scanner`, `modbus_tool`,
+`danss_psu_fe`; с тестами — `test_config_loader`, `test_psu_worker`, `test_owon_psu`, `psu_bench`.
+MIDAS подключается через `find_package(Midas)` (цель `midas::midas` несёт пути к
+mvodb/midasio и zlib, с которыми MIDAS собран).
 
-### modbus_scanner
+**cvme1** (системный gcc/g++ не трогаем — тулчейн conda, см. §16):
 
 ```bash
-# базовое сканирование
-./bin/modbus_scanner /dev/ttyUSB0
-
-# с показом текущего адреса в прогресс-баре
-./bin/modbus_scanner --show-addresses /dev/ttyUSB0
-
-# диапазон + подробный вывод
-./bin/modbus_scanner -v -s 1 -e 30 /dev/ttyUSB0
-
-# все ветки
-for i in {0..7}; do ./bin/modbus_scanner /dev/ttyUSB$i > branch${i}.txt; done
-
-# на реальном тестовом стенде ДАНСС-2 (см. §13): устройство /dev/ttyACM3, платы 1 и 2
-./bin/modbus_scanner -s 1 -e 2 /dev/ttyACM3
+CONDA_PKGS_DIRS=$HOME/.conda/pkgs ~/miniforge3/bin/conda install -y -p ~/miniforge3/envs/gcc13 \
+    -c conda-forge libboost-devel nlohmann_json
+G=$HOME/miniforge3/envs/gcc13
+cmake -DCMAKE_CXX_COMPILER=$G/bin/x86_64-conda-linux-gnu-g++ -DCMAKE_CXX_FLAGS="-isystem $G/include" \
+      -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" -DBoost_ROOT=$G -DBUILD_TESTS=ON ..
 ```
 
-Опции: `-s/--start`, `-e/--end`, `-t/--timeout` (мс), `-v/--verbose`, `-q/--quick`, `--show-addresses`, `--delay` (мс).
-
-На выходе — таблица найденных плат + **готовый JSON-фрагмент для `board_map.json`**.
-
-### danss_frontend
+**Ручная сборка утилит без MIDAS** (Mac/cvme1):
 
 ```bash
-# тест платы по адресу 1 (по умолчанию)
-./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400
-
-# тест платы по конкретному адресу
-./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400 5
-
-# режим без MIDAS
-./bin/danss_frontend --standalone -v
-
-# полноценный MIDAS-режим (пока НЕ реализован)
-./bin/danss_frontend -e DANSS
+c++ -std=c++17 -O2 -Iinclude -I<boost/json include> src/utils/modbus_tool.cpp src/modbus/modbus_rtu.cpp \
+    src/modbus/modbus_crc.cpp src/modbus/board_client.cpp src/utils/logger.cpp -o modbus_tool
 ```
 
-### Генерация конфигурации на 240 плат
+### Утилиты
 
 ```bash
-cd config
-python3 generate_full_config.py            > board_map_full.json
-python3 generate_full_config.py --eeprom   > eeprom_reference_full.json
+modbus_scanner -q -s 1 -e 247 /dev/ttyACM3            # найти платы (38400 по умолчанию)
+modbus_tool /dev/ttyACM3 1 info                       # одна плата: всё по карте v2
+modbus_tool /dev/ttyACM3 1 sp-dump backup_1.json      # резервная копия до любых записей
+psu_bench --config config/power_supply.json info      # блок питания: только чтение
+danss_psu_fe -- --config config/power_supply.json     # MIDAS frontend блока питания
+danss_frontend --standalone -c config/board_map_stand.json   # проверить конфиг плат
 ```
+
+Порт на macOS — `/dev/cu.usbserial-*`. Без железа: `tests/fake_modbus_slave.py` (печатает
+pty-устройство), `tests/mock_owon_server.py <port>`.
 
 ---
 
-## 8. Формат конфигурации
+## 8. Конфигурация
 
-### `board_map.json`
+Все три файла читает `ConfigLoader` (`include/common/config_loader.h`). Ошибка — исключение
+`ConfigError` с файлом и путём до поля; неизвестное поле — предупреждение; отсутствующее
+необязательное — значение по умолчанию из `constants.h`.
 
-```json
-{
-  "system": {
-    "poll_interval_sec": 300,
-    "eeprom_check_interval_sec": 86400,
-    "modbus_timeout_ms": 1000,
-    "response_timeout_ms": 500,
-    "max_retries": 3,
-    "retry_delay_ms": 100
-  },
-  "branches": [
-    {
-      "id": 0,
-      "device": "/dev/ttyUSB0",
-      "baud_rate": 38400,
-      "data_bits": 8,
-      "parity": "N",
-      "stop_bits": 1,
-      "boards": [
-        { "address": 1, "name": "PMT-01-01", "enabled": true }
-      ]
-    }
-  ]
-}
-```
-
-### `eeprom_reference.json`
-
-```json
-{
-  "description": "EEPROM reference data for board validation",
-  "last_updated": "2025-01-18",
-  "boards": [
-    {
-      "name": "PMT-01-01",
-      "modbus_address": 1,
-      "branch_id": 0,
-      "thermometer_ids": ["28FF641E8316055A", "..."],
-      "cpu_id": "ABC123DEF456"
-    }
-  ]
-}
-```
+- **`board_map.json`**: `system` (интервалы, таймауты, повторы) и `branches[]` (`id`, `device`,
+  `baud_rate` = 38400, `parity` N/E/O, `boards[]` с `address` 1–247, `name`, `enabled`).
+  Проверки: адреса без повторов на ветке, имена уникальны, стандартные скорости, 247 —
+  предупреждение.
+- **`eeprom_reference.json`**: `boards[]` с `name`, `modbus_address`, `thermometer_ids`
+  (16 hex-цифр), `cpu_id` (hex); приводятся к верхнему регистру.
+- **`power_supply.json`**: `host` (IP), `port`, `poll_interval_sec` (10), `channels[]` с
+  `role` CPU_POWER / SIPM_HV / UNUSED, целью, током, OVP, OCP, шагом и интервалом разгона,
+  `require_interlock`. Проверки безопасности: ch1/ch2 ≤ 60 В и OVP ≤ 61 В, ch3 ≤ 6 В и
+  OVP ≤ 6.6 В, OCP ≤ 3.1 А, OVP ≥ цель + 0.5 В, OCP ≥ ток, для SIPM_HV интерлок обязателен
+  и шаг ≤ 5 В.
 
 ---
 
-## 9. Ключевые структуры данных (`include/common/types.h`)
+## 9. Ключевые структуры данных
 
-```cpp
-namespace danss {
-
-struct SiPMData {
-    uint16_t leakage_current;      // input 3–14
-    uint16_t temperature;          // input 15–26
-    std::string thermometer_id;    // 1-Wire ID из EEPROM (input 100–147)
-};
-
-struct BoardData {                 // карта регистров v2, doc/MODBUS_MAP_v2.md
-    uint8_t  modbus_address;
-    std::string board_name;
-    uint16_t update_counter;       // input 0
-    uint16_t hv_status;            // input 1: trip по аналоговой плате + HV по каналу
-    uint16_t gain_trip_status;     // input 2
-    std::array<SiPMData, 12> sipm_channels;
-    uint16_t cpu_temperature;      // input 27
-    uint16_t cpu_temp_offset;      // input 246
-    std::string cpu_id;            // input 148–149
-    std::array<uint16_t, 96> dac_readback;  // input 150–245
-    std::array<uint16_t, 96> dac_settings;  // holding 0–95
-    uint16_t hv_enable;            // holding 96
-    uint16_t gain_trip_enable;     // holding 97
-    uint16_t global_csr;           // holding 98 (статус команды)
-    uint16_t cycle_delay;          // holding 99
-    uint16_t device_address;       // holding 100
-    uint64_t timestamp_ms;
-    bool data_valid;
-    bool data_fresh;               // input 0 изменился с прошлого опроса
-    std::string error_message;
-    // + hv_channel_enabled(), analog_board_tripped(), any_trip(), dac_mismatches()
-};
-
-struct ScratchpadImage { std::array<uint16_t, 512> words;   // input 250–761
-                         bool checksum_ok() const; /* сумма = 0xAA55 */ };
-
-struct BoardConfig  { uint8_t address; std::string name; bool enabled;
-                      std::vector<std::string> thermometer_ids; std::string cpu_id; };
-struct BranchConfig { uint8_t id; std::string device; uint32_t baud_rate;
-                      uint8_t data_bits; char parity; uint8_t stop_bits;
-                      std::vector<BoardConfig> boards; };
-struct SystemConfig { std::vector<BranchConfig> branches;
-                      uint32_t poll_interval_sec, eeprom_check_interval_sec;
-                      uint32_t modbus_timeout_ms, response_timeout_ms;
-                      uint8_t max_retries; uint32_t retry_delay_ms; };
-
-enum class RunMode : uint8_t { STOPPED, PHYSICS_RUN, CALIBRATION_RUN, MAINTENANCE };
-enum class AlarmSeverity : uint8_t { INFO, WARNING, ERROR, CRITICAL };
-
-struct BranchStats { uint64_t total_transactions, successful_reads, failed_reads,
-                     timeouts, crc_errors; double avg_response_time_ms; };
-}
-```
-
-## Интерфейс ModbusRTU (`include/modbus/modbus_rtu.h`)
-
-```cpp
-class ModbusRTU {
-public:
-    ModbusRTU(const std::string& device, uint32_t baud_rate = 19200);
-    bool open();  void close();  bool is_open() const;
-    void set_timeout(uint32_t timeout_ms);
-
-    bool read_input_registers  (uint8_t slave, uint16_t start, uint16_t count,
-                                std::vector<uint16_t>& out);
-    bool read_holding_registers(uint8_t slave, uint16_t start, uint16_t count,
-                                std::vector<uint16_t>& out);
-    bool write_single_register (uint8_t slave, uint16_t reg, uint16_t value);
-    bool write_multiple_registers(uint8_t slave, uint16_t start,
-                                  const std::vector<uint16_t>& values);
-
-    struct Statistics { uint64_t total_requests, successful_responses, timeouts,
-                        crc_errors, exception_responses; double avg_response_time_ms; };
-    Statistics get_statistics() const;
-    void reset_statistics();
-    std::string get_last_error() const;
-};
-```
+- `BoardData` (`types.h`) — снимок платы по карте v2: `update_counter`, `hv_status`,
+  `gain_trip_status`, 12 × (`leakage_current`, `temperature`, `thermometer_id`),
+  `cpu_temperature`, `cpu_temp_offset`, `cpu_id`, `dac_readback[96]`, `dac_settings[96]`,
+  `hv_enable`, `gain_trip_enable`, `global_csr`, `cycle_delay`, `device_address`,
+  `data_valid`, `data_fresh`; помощники `hv_channel_enabled()`, `analog_board_tripped()`,
+  `any_trip()`, `dac_mismatches()`.
+- `ScratchpadImage` — 512 слов, `checksum_ok()`, доступ к полям.
+- `BoardConfig`, `BranchConfig`, `SystemConfig`; `PSUConfig`, `PSUChannelConfig`,
+  `PSUChannelStatus`; `RunMode`, `Alarm`, `BranchStats`.
+- `ModbusRTU(device, baud_rate = 38400)`: `read_input_registers`, `read_holding_registers`,
+  `write_single_register`, `write_multiple_registers`, статистика, `get_last_error()`.
+- `BoardClient(bus, address)`: `read_status/settings/dac_readback/ids/scratchpad`,
+  `write_dac/all_dac/hv_enable/...`, `wait_next_cycle`, `write_dac_verified`, `csr_command`,
+  `save_to_scratchpad`, `load_from_scratchpad`, `erase_scratchpad`, `assign_address`.
 
 ---
 
-## 10. Константы MIDAS (`constants.h`)
+## 10. MIDAS: equipment, ODB, банки
 
-```
-EQUIPMENT_NAME_SLOW_CONTROL = "SlowControl"
-EQUIPMENT_NAME_SYNC         = "RunSync"
+| Equipment | Программа | Event ID | Банк | Статус |
+|---|---|---|---|---|
+| `PowerSupply` | `danss_psu_fe` | 4 | `PSUD` (V, I, P, On × 3, float) | готов |
+| `SlowControl` | будет отдельной программой | 1–3 | `BDAT`, `STAT`, `ALRM` | следующий шаг |
 
-ODB_PATH_SETTINGS  = "/Equipment/SlowControl/Settings"
-ODB_PATH_VARIABLES = "/Equipment/SlowControl/Variables"
-ODB_PATH_ALARMS    = "/Alarms/SlowControl"
+**ODB `/Equipment/PowerSupply`:**
 
-EVENT_ID_SLOW_CONTROL = 1
-EVENT_ID_BOARD_DATA   = 2
-EVENT_ID_EEPROM_CHECK = 3
-
-BANK_NAME_BOARD_DATA = "BDAT"
-BANK_NAME_STATISTICS = "STAT"
-BANK_NAME_ALARMS     = "ALRM"
-```
-
-Пороги алармов (в единицах АЦП, требуют уточнения под реальное железо):
-`SIPM_CURRENT_WARNING=3000 / ERROR=4000`, `SIPM_TEMP_WARNING=3500 / ERROR=4000`, `CPU_TEMP_WARNING=3000 / ERROR=3500`.
-
----
-
-## 11. Стратегия опроса
-
-**Каждые 5 минут, для каждой платы:**
-1. Read Input Registers 0–27 (счётчик обновлений, статус HV и trip, токи, температуры, CPU)
-2. Read Holding Registers 0–100 (DAC, HV enable, усиление/trip, CSR, задержка, адрес)
-3. Проверка свежести: счётчик в input 0 должен измениться с прошлого опроса
-
-**Раз в сутки (фоновая задача):**
-1. Read Input Registers 100–149 (ID термометров + CPU ID) и 150–245 (обратное чтение DAC)
-2. Read Input Registers 250–761 (scratchpad), проверка суммы 0xAA55
-3. Сверка с эталоном из `eeprom_reference.json` и с уставками
-4. При несовпадении — аларм и/или восстановление (запись уставок → 103 → 105 → статус в holding 98)
-
-**Обработка ошибок:**
-- Таймаут → до 3 повторов → пометить плату offline + аларм, продолжить с остальными
-- CRC-ошибка → немедленный повтор; при >10 подряд — подозрение на кабель/наводки, аларм
-- Ошибка порта → закрыть/открыть порт; при неуспехе — отключить ветку, критический аларм
+- `Settings/` — `Host`, `Port`, `Poll interval sec`, таймауты; массивы по каналам (индекс =
+  канал − 1): `Role`, `Name`, `Target V`, `Current limit A`, `OVP V`, `OCP A`, `Ramp step V`,
+  `Ramp interval ms`, `Require interlock`. При первом запуске заполняются из JSON, дальше
+  правятся в браузере; **каждое изменение проверяется ConfigLoader**, недопустимое
+  отклоняется целиком (ошибка в `Readback/Settings error`, аларм).
+- `Settings/Enable[3]` — команды (сбрасываются в `n`, если не выполнились);
+  `Settings/Interlock ready` — ручной интерлок, при старте `n`.
+- `Readback/` — `Connected`, `Protections ok`, `Interlock ready`, `Busy`, `Last error`,
+  `Settings error`, `Output on[3]`, `Voltage V[3]`, `Current A[3]`.
+- Алармы: «PowerSupply link», «PowerSupply chN voltage», «PowerSupply settings».
+- JRPC `emergency_shutdown`. Остановка frontend выходы не трогает.
 
 ---
 
-## 12. Что делать дальше (приоритеты)
+## 11. Стратегия опроса плат
 
-1. **`ConfigLoader`** — реальный парсинг `board_map.json` и `eeprom_reference.json` через nlohmann/json
-2. **`BoardRegistry`** — хранение 240 плат, поиск, трекинг состояния
-3. **`RS485BranchManager`** — потоки по веткам, retry, статистика
-4. **`PeriodicPoller`** — 5-минутный цикл, параллельный опрос
-5. **MIDAS frontend** — `SlowControlEquipment`, банки, ODB
-6. **EEPROM-валидация** — суточный цикл
-7. **State machine** + алармы
+**Каждые 5 минут, для каждой платы:** input 0–27 и holding 0–100 (по одной транзакции);
+свежесть — счётчик input 0 изменился (сравнивать на «изменился», он 16-битный); сброс
+счётчика — плата перезагружалась (scratchpad загружается сам, команда не нужна).
 
-Оценка до production-ready: ~2–3 месяца.
+**Раз в сутки:** input 100–149 (ID), 150–245 (обратное чтение DAC), 250–761 (scratchpad,
+сумма 0xAA55), сверка с эталоном и уставками; восстановление — запись уставок → 103 → 105.
+
+**Каналы без аналоговой платы** (обратное чтение DAC = 0, температура 0x8001, ID = 0) —
+не сверять DAC и не поднимать алармы по температуре. Признак «плата подключена» — пока
+допущение (ненулевой ID термометра), ждём ответа Игоря.
+
+**Ошибки:** таймаут → до 3 повторов → плата offline + аларм; CRC → повтор, >10 подряд —
+аларм «кабель/наводки»; ошибка порта → переоткрыть, иначе отключить ветку + критический аларм.
 
 ---
 
-## 13. Тестовый стенд ДАНСС-2 (практическая информация от Игоря, сентябрь 2026)
+## 12. Приоритеты
 
-### Modbus на реальном железе
+1. `BoardRegistry` + `PeriodicPoller` (проверка — плата 17 и `fake_modbus_slave.py`)
+2. SlowControl frontend (TMFE) + интерлок HV от состояния плат (условия — решение группы)
+3. `danss_psu_fe` на cvme1 с OWON; сканирование стенда на 38400
+4. Суточная сверка; RunStateMachine; WFD frontend на cvme1
 
-- Плата электроники подключена к крейту VME через **`/dev/ttyACM3`**
-- Сейчас отвечают адреса **1 и 2** (процессорные платы установлены; аналоговые платы привезены, но будут подключены позже, в сентябре)
-- Скорость связи: в сентябре 2026 была жёстко 19200 бод; с прошивкой v2 — 38400 (проверено 07.11.2026); в будущем прошивка получит регистр выбора скорости
-- Карта регистров (см. §2) подтверждена прошивкой 1-в-1
+Трекер задач: артефакт «План работ DANSS DAQ» в Claude.
 
-### Доступ к оборудованию и серверам
+---
+
+## 13. Тестовый стенд ДАНСС-2
 
 | Ресурс | Адрес/данные |
 |---|---|
-| Лабораторный сервер (снаружи ФИАНа) | `amefodev@dansslab.ddns.net` |
-| Лабораторный сервер (изнутри ФИАНа, включая wifi 2/3 этажа) | `server.danss.local` |
-| VNC-дисплей на сервере | `:6` (пример: `ssh -f -L 5906:localhost:5906 amefodev@dansslab.ddns.net`, затем `vncviewer -geometry 2400x1600 :6`) |
-| Управление розетками (изнутри сети) | `http://power0.danss.local`, пользователь `administrator` |
-| Розетки | `[04] DANSS II Test Stand Power`, `[05] Test Stand 15V DC`, `[08] CVME1` |
-| VME крейт-контроллер | `cvme1.danss.local` — i7-4700EQ (4 ядра) @2.4ГГц, 16 ГБ RAM, мост Tundra CA91C042; Debian buster/sid, кастомное ядро Linux 4.15.1; логин с тем же именем и паролем, что и на сервере |
-| Загрузка крейта | по PXE → tftp с сервера, файлы в `/srv/tftp`, конфиг `pxelinux.cfg/cvme1.cfg` |
-| Блок питания | OWON ODP6033, Ethernet `d2pwr1.danss.local` / `192.168.10.81`, управляющий порт **3000**, протокол SCPI (проверено `telnet d2pwr1 3000` → `*IDN?`) |
+| Лабораторный сервер (снаружи) | `amefodev@dansslab.ddns.net` |
+| Лабораторный сервер (внутри) | `server.danss.local` — Fedora 33 (EOL); chronyd |
+| VNC | `:6` (`ssh -f -L 5906:localhost:5906 amefodev@dansslab.ddns.net`) |
+| Розетки | `http://power0.danss.local`: [04] Test Stand Power, [05] Test Stand 15V DC, [08] CVME1 |
+| VME крейт-контроллер | `cvme1.danss.local` — i7-4700EQ, 16 ГБ, мост Tundra CA91C042; **Linux Mint 19.1** (bionic, glibc 2.27), GCC 7.5, ядро 4.15.1; загрузка по PXE, корень по NFS |
+| RS-485 к платам | на cvme1 `/dev/ttyACM3` (адаптер WCH, порт if06), **38400** |
+| Блок питания | OWON ODP6033, **`192.168.10.81:3000`** (`d2pwr1.danss.local`), SCPI, FV V3.10.0 |
 
-### Блок питания OWON ODP6033 — распределение каналов
-
-- **ch1** — сейчас задействован для стенда (нерегулируемый блок заменён на этот)
-- **ch3** — планируется под фиксированное питание плат электроники, 5.5–6 В
-- Оставшиеся два канала — под высокое напряжение (HV) для SiPM
-
-### Драйвер и ПО VME/WFD
-
-- Поддержка моста Tundra CA91C042 есть в апстриме, но рекомендуется форк лаборатории (Дима Калинкин правил драйвер, но апстрим не принял последние изменения): `github.com/lab305itep/linux`, ветка `vme_patches2_rebase2`, каталог `drivers/vme/bridges`
-- Модули WFD (waveform digitizer) описаны в двух документах на Overleaf (ссылки хранятся в переписке, не дублируются здесь по сроку жизни)
-- Штатного ПО для работы с WFD за 12 лет не появилось — используется отладочный код: `github.com/lab305itep/uwfd64`
-
-### Что это означает для проекта
-
-- Дефолтный/тестовый `board_map.json` для работы на стенде должен указывать `device: "/dev/ttyACM3"` и содержать платы с адресами 1 и 2 (а не полную конфигурацию на 240 плат) — конфиг на 240 плат остаётся целевым для финальной установки на детекторе
-- Общая архитектура (`RS485BranchManager` на несколько веток `/dev/ttyUSB*`) не меняется — на стенде это частный случай с одной активной веткой на `ttyACM3`
-- Интеграция с блоком питания OWON ODP6033 по Ethernet/SCPI — потенциальная дополнительная задача (не входит в Modbus/RS-485 часть, отдельный протокол и канал)
+- **OWON, каналы:** ch3 — питание электроники 6 В (максимум канала 6 В), ch1 — HV SiPM 55 В,
+  ch2 — резерв. Рабочие пороги в приборе: ch1 OVP 57 В / OCP 0.7 А, ch3 OVP 6.5 В / OCP 3.1 А.
+  На 07.11.2026 к OWON ничего не подключено.
+- **Платы:** процессорные 1, 2 на стенде, 3 — запрограммирована; плата 17 — у Александра для
+  проверок (к ней ничего не подключено). 2 ноября на стенде не ответила ни одна плата на
+  19200 — повторить на 38400.
+- **VME/WFD:** драйвер моста — форк `github.com/lab305itep/linux`, ветка
+  `vme_patches2_rebase2`; отладочный код WFD — `github.com/lab305itep/uwfd64`.
 
 ---
 
-## 14. Окружение пользователя
+## 14. Окружение
 
-- Рабочая директория проекта: `~/work/danss/danss-slow-control`
-- MIDAS: `~/work/danss/packages/midas`
-- Компилятор: `/usr/bin/c++` (GCC 11+), Boost 1.83.0
-- Сборка: `~/work/danss/danss-slow-control/build`
-- Известное безвредное предупреждение: `modbus_scanner.cpp:159` — сравнение `int` и `size_t` (можно поправить приведением `found_count` к `size_t`)
+- **Mac (разработка):** репозиторий `~/work/danss/DAQ/danss_daq`; MIDAS (другой коммит)
+  `~/work/danss/packages/midas`; адаптер `/dev/cu.usbserial-1140`.
+- **cvme1:** репозиторий `~/daq/danss_daq`; MIDAS `~/daq/packages/midas` (c69c085);
+  тестовый эксперимент `~/daq/online`; тулчейн `~/miniforge3/envs/gcc13`; CMake 3.28 в
+  `~/.local/bin`.
 
 ---
 
-## 15. Управление блоком питания OWON ODP6033 (Slow Control)
+## 15. Блок питания OWON ODP6033
 
-Отдельная задача, добавлена в сентябре 2026 по итогам переписки с Игорем (§13):
-нужен SC для блока OWON ODP6033, который подаёт ~6В на CPU-платы электроники и
-~55В HV на SiPM.
+**Слои:** `OwonPSU` (SCPI/TCP, таймауты через `select()`, переподключение после сбоя) →
+`PowerSupplyController` (пороги с обратным чтением, интерлок, разгон/спуск HV, аварийное
+выключение, сверка порогов после переподключения) → `PsuWorker` (поток, неблокирующие
+команды, прерывание разгона) → `danss_psu_fe` (§10).
 
-### Железо и протокол
+**Правила безопасности в коде:**
+- HV (`SIPM_HV`) включается только при интерлоке, подтверждённых OVP/OCP и включённом
+  питании электроники (ch3); начинается с 0 В (или с текущего напряжения, если выход включён).
+- Снятие интерлока или «выключить» во время разгона — разгон прерывается, канал плавно
+  опускается. Аварийное выключение — `OUTPut:STATe 0` (все выходы), с проверкой и повтором.
+- Один канал включается/выключается через `CHANnel:OUTPut:ALL` с обратным чтением.
 
-- **OWON ODP6033**: 3 канала — CH1, CH2 (0–60В / 3А каждый), CH3 (0–6В / 3А)
-- Управление по Ethernet, **SCPI поверх сырого TCP-сокета**, порт **3000**
-  (подтверждено `telnet d2pwr1 3000` → `*IDN?` в переписке)
-- Адрес на стенде: `d2pwr1.danss.local` / `192.168.10.81:3000`
-- Маппинг каналов на задачи — **конфигурируемый** (см. `config/power_supply.json`),
-  жёстко в код не зашит. Пример для стенда: CH3 → CPU-платы (6В), CH1 → SiPM HV (55В),
-  CH2 → резерв/не используется.
-- Источник команд SCPI: `owon_odp_series_power_supply_programming_manual.pdf`
-  (найден веб-поиском, ODP3033/ODP3063/ODP6033 одна прошивка команд).
+**Интерлок сейчас** — программный флаг, ручной (`Settings/Interlock ready`). Не аппаратная
+защита (её дают OVP/OCP прибора) и не страховка от падения программы. Целевой источник —
+SlowControl по состоянию плат (на связи, `Update#` растёт, нет trip, температуры в норме);
+условия — решение группы до подключения SiPM.
 
-### Архитектурные решения
+**Проверено на приборе (02.11.2026, без нагрузки):** `psu_bench` — info, limits (с `--config`),
+cpu-on/off, hv 5, interlock 6, hv 55 (разгон 27 с при 1 В / 0.5 с, выдержка 54.99 В).
 
-1. **Отдельный MIDAS Equipment `PowerSupply`**, параллельно `SlowControl`/`RunSync`
-   (не часть общего Modbus-опроса) — свой цикл опроса, чтобы TCP round-trip к
-   блоку питания не тормозил Modbus-цикл по веткам RS-485.
-2. **Два слоя**, по аналогии с `ModbusRTU`:
-   - `OwonPSU` (`include/power/owon_psu.h`, `src/power/owon_psu.cpp`) — низкоуровневый
-     SCPI/TCP-клиент: `connect()`/`disconnect()` с ограниченным по времени
-     handshake, `select_channel()`, `set_voltage()`/`set_current()`,
-     `set_voltage_protection()`/`set_current_protection()` (OVP/OCP),
-     `set_output()`, измерения (`measure_voltage/current/power`,
-     `measure_all_*`, `get_all_output_states`), статистика и `get_last_error()`.
-     Таймаут на чтение ответа реализован тем же приёмом, что и в `ModbusRTU`:
-     `select()` на файловом дескрипторе сокета, чтобы недоступный/выключенный
-     блок питания не подвесил поток опроса.
-   - `PowerSupplyController` (`include/power/power_controller.h`,
-     `src/power/power_controller.cpp`) — политика поверх клиента:
-     - `apply_protection_limits()` — выставляет OVP/OCP и ток-лимит на все
-       каналы один раз при старте (не полагаемся на то, что осталось в
-       памяти прибора с прошлой сессии);
-     - `set_interlock_ready(bool)` / `is_interlock_ready()` — внешний интерлок;
-       пока источник интерлока не определён (зависит от ещё не написанного
-       `BoardRegistry` — идея: HV включается только когда платы SuperFGD online);
-     - `enable_channel()` — для `SIPM_HV`: сначала обнуляет напряжение, включает
-       выход, затем плавно поднимает до целевого шагами `ramp_step_v` каждые
-       `ramp_interval_ms` (блокирующий вызов); для `CPU_POWER` — выставляет
-       напряжение и включает выход сразу, без разгона;
-     - `disable_channel()` — для HV плавно опускает до 0В перед выключением
-       выхода; для CPU-питания выключает сразу;
-     - `emergency_shutdown()` — мгновенно выключает все выходы без разгона
-       (для перехода `ANY → STOPPED` и обработки аварий);
-     - `poll()` — измеренные напряжение/ток/мощность + состояние выхода по
-       каждому настроенному каналу, для цикла опроса SlowControl/MIDAS.
-3. **Типы конфигурации** в `include/common/types.h`: `PSUChannelRole`
-   (`UNUSED`/`CPU_POWER`/`SIPM_HV`), `PSUChannelConfig` (канал, роль, целевое
-   напряжение, ток-лимит, OVP/OCP, шаг и интервал разгона, флаг интерлока),
-   `PSUConfig` (host/port/каналы/таймауты), `PSUChannelStatus` (снимок
-   измерений для одного канала). Плюс поле `SystemConfig::power_supply`.
-4. **Константы** в `include/common/constants.h`: порт по умолчанию 3000,
-   таймауты подключения/ответа, число каналов, дефолтный шаг/интервал
-   разгона (1В / 500мс), имя MIDAS Equipment `"PowerSupply"`, пути ODB,
-   `EVENT_ID_POWER_SUPPLY`, `BANK_NAME_PSU_DATA = "PSUD"`, допуски по
-   напряжению/марже OVP/OCP.
-5. **Пример конфига** `config/power_supply.json` — host/port/таймауты + 3 канала
-   (CH3=CPU 6В, CH1=SiPM HV 55В с `require_interlock: true`, CH2=не используется).
-6. **`ConfigLoader::load_power_config()`** — объявлен в `config_loader.h`,
-   реализация пока заглушка (возвращает дефолты), как и остальной `ConfigLoader`.
-7. **`src/power/power_equipment.cpp`** — заглушка с описанием плана интеграции
-   в MIDAS (Фаза 4): `init()`/`read_event()`/интерлок из `SlowControl`/хуки
-   на переходы `RunStateMachine`.
-8. **CMakeLists.txt** обновлён: `include/power` в include-путях, новый
-   `POWER_SOURCES` (`owon_psu.cpp`, `power_controller.cpp`) добавлен в
-   `danss_core`, `power_equipment.cpp` — во `FRONTEND_SOURCES`.
+**Открыто:** проверка на нагрузке (SiPM); допустимая скорость нарастания HV (в конфиге
+1 В / 1000 мс → ≈ 55 с); во время разгона `Readback/Voltage V` не обновляется.
 
-### Статус проверки
+---
 
-Новые `.cpp`/`.h` пропущены через `g++ -std=c++17 -Wall -Wextra -fsyntax-only`
-(с реальными заголовками boost::asio) — компилируются чисто, без предупреждений.
-**Полная сборка через CMake+MIDAS и проверка на реальном блоке OWON ODP6033
-(на стенде, `d2pwr1.danss.local:3000`) ещё не выполнялись** — это следующий шаг.
+## 16. MIDAS на cvme1 и DAQ-сервере
 
-### Открытые вопросы (не решены, отслеживаются в TODO.md, раздел "Phase 2b")
+- **Разделение:** на cvme1 только то, что рядом с железом (VME-драйвер, WFD frontend);
+  ODB, mserver, mlogger, mhttpd — на DAQ-сервере; frontend подключается по TCP 1175.
+  Event builder — на отдельном сервере (Р6).
+- **Правило:** frontend и сервер MIDAS — из одного коммита (`c69c0853930b…`).
+- **cvme1: системные gcc/g++ не менять.** Отвергнуто: g++-13 из PPA (тянет libstdc++6 от
+  GCC 16, PPA удалён), кросс-сборка, старый MIDAS, системный zlib с conda-компилятором.
+- **Выбрано:** CMake 3.28 через `pip --user`; Miniforge `~/miniforge3`, окружение `gcc13`
+  (GCC 13.4, без sudo, `conda init` не запускали); `-static-libstdc++ -static-libgcc`; zlib
+  из conda через `-isystem $Z/include` и RPATH (каталог `miniforge3` удалять нельзя).
 
-- Источник и логика интерлока (`set_interlock_ready`) — привязка к состоянию
-  плат/детектора ещё не спроектирована, ждёт `BoardRegistry`
-- Реальные значения шага/интервала разгона HV (сейчас placeholder 1В/500-1000мс)
-  — нужно уточнить у группы допустимую скорость нарастания HV на SiPM
-- Реальный парсинг `power_supply.json` в `ConfigLoader`
-- Верификация SCPI-команд на настоящем приборе (манускрипт найден в вебе,
-  не локальная копия — стоит сверить с паспортом/шильдиком конкретного блока)
+```bash
+G=$HOME/miniforge3/envs/gcc13/bin; Z=$HOME/miniforge3/envs/gcc13
+cd ~/daq/packages/midas/build && rm -rf *
+cmake -DCMAKE_C_COMPILER=$G/x86_64-conda-linux-gnu-gcc -DCMAKE_CXX_COMPILER=$G/x86_64-conda-linux-gnu-g++ \
+      -DCMAKE_C_FLAGS="-isystem $Z/include" -DCMAKE_CXX_FLAGS="-isystem $Z/include" \
+      -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+      -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+      -DZLIB_INCLUDE_DIR=$Z/include -DZLIB_LIBRARY=$Z/lib/libz.so -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON ..
+make -j4 && make install
+```
+
+- **Статус:** MIDAS собран и работает на cvme1 (mhttpd запускается). Часы cvme1 с сервером
+  синхронизированы. На сервере (`server.danss.local`, Fedora 33) — окружение conda `daq` с
+  ROOT 6.40.04 (C++20) для сборки MIDAS с ROOT; сборка MIDAS там не подтверждена.
+- Сетевой доступ cvme1 → сервер на порт mserver проверить при запуске WFD frontend.
+
+---
+
+## 17. Журнал проверок на железе
+
+| Дата | Что | Результат |
+|---|---|---|
+| 02.11.2026 | Стенд, `modbus_scanner` на ttyACM0–3, ttyUSB2–6, 19200 | ни одна плата не ответила (скорость — 38400) |
+| 02.11.2026 | OWON, `psu_bench` | найдено: `OUTP:STAT` = все каналы, `OUTP:STAT:ALL?` одно число, OCP ≤ 3.1 А, имя `.local` не разрешается; исправлено; разгон до 55 В |
+| 07.11.2026 | Плата 17 на Mac, 38400 | карта v2 без ошибок; цикл 134 мс; scratchpad сохранение и автозагрузка; DAC readback = 0 без аналоговых плат |

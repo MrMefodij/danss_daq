@@ -1,292 +1,95 @@
-# Build Instructions
+# Сборка
 
-## Prerequisites
+Обновлено 07.11.2026.
 
-### 1. Install MIDAS 2.1
+## Зависимости
 
-```bash
-# Download MIDAS
-cd /opt
-git clone https://github.com/midas-daqsystem/midas.git
-cd midas
+| Что | Версия | Примечание |
+|---|---|---|
+| MIDAS | коммит `c69c0853930b226e96090725a0ba5cb2b4293a14` | один и тот же на всех машинах (frontend и сервер) |
+| Компилятор | C++17 (MIDAS сам собран как C++20) | на cvme1 — conda GCC 13.4, системный GCC 7.5 не трогаем |
+| Boost | Asio + system, thread | Ubuntu 24.04 — 1.83; cvme1 — `libboost-devel` из conda |
+| nlohmann/json | 3.12 | CMake скачивает сам (FetchContent) |
+| CMake | 3.16+ | на cvme1 — 3.28 через `pip --user` |
 
-# Checkout MIDAS 2.1
-git checkout midas-2.1
-
-# Build
-mkdir build
-cd build
-cmake ..
-make -j$(nproc)
-make install
-
-# Set environment variables (add to ~/.bashrc)
-export MIDASSYS=/opt/midas
-export MIDAS_EXPTAB=/etc/exptab
-export PATH=$MIDASSYS/bin:$PATH
-export LD_LIBRARY_PATH=$MIDASSYS/lib:$LD_LIBRARY_PATH
-```
-
-### 2. Install Boost Libraries
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get update
-sudo apt-get install libboost-all-dev
-```
-
-**CentOS/RHEL:**
-```bash
-sudo yum install boost-devel
-```
-
-**From source:**
-```bash
-wget https://boostorg.jfrog.io/artifactory/main/release/1.81.0/source/boost_1_81_0.tar.gz
-tar xzf boost_1_81_0.tar.gz
-cd boost_1_81_0
-./bootstrap.sh --prefix=/usr/local
-./b2 install
-```
-
-### 3. Install Build Tools
+## Обычная сборка
 
 ```bash
-# Ubuntu/Debian
-sudo apt-get install build-essential cmake git
-
-# CentOS/RHEL
-sudo yum install gcc gcc-c++ cmake git
+export MIDASSYS=/path/to/midas
+mkdir -p build && cd build
+cmake -DBUILD_TESTS=ON ..
+make -j4
+ctest                      # test_config_loader
 ```
 
-## Building the Project
+MIDAS подключается через `find_package(Midas)` из `$MIDASSYS` (цель `midas::midas` несёт
+пути к mvodb/midasio/mxml и zlib, с которыми MIDAS собран).
 
-### 1. Clone Repository
+| Цель | Что это |
+|---|---|
+| `danss_core` | статическая библиотека: Modbus, BoardClient, PSU, PsuWorker, ConfigLoader, Logger |
+| `danss_frontend` | CLI: `--test-modbus`, `--standalone -c board_map.json` (проверка конфига) |
+| `modbus_scanner` | поиск плат на шине |
+| `modbus_tool` | одна плата: чтение, запись, scratchpad, адрес |
+| `danss_psu_fe` | MIDAS frontend блока питания (TMFE) |
+| `test_config_loader`, `test_psu_worker`, `test_owon_psu`, `psu_bench` | с `-DBUILD_TESTS=ON` |
+
+## cvme1 (Linux Mint 19.1)
+
+MIDAS на cvme1 собран тулчейном conda (см. `PROJECT_CONTEXT.md` §16). Проект — тем же:
 
 ```bash
-git clone <repository-url> danss-slow-control
-cd danss-slow-control
+CONDA_PKGS_DIRS=$HOME/.conda/pkgs ~/miniforge3/bin/conda install -y -p ~/miniforge3/envs/gcc13 \
+    -c conda-forge libboost-devel nlohmann_json
+G=$HOME/miniforge3/envs/gcc13
+export MIDASSYS=$HOME/daq/packages/midas
+cd ~/daq/danss_daq && mkdir -p build && cd build
+cmake -DCMAKE_CXX_COMPILER=$G/bin/x86_64-conda-linux-gnu-g++ \
+      -DCMAKE_CXX_FLAGS="-isystem $G/include" \
+      -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" \
+      -DBoost_ROOT=$G -DBUILD_TESTS=ON ..
+make -j4 && ctest
 ```
 
-### 2. Configure with CMake
+`CONDA_PKGS_DIRS` нужен, потому что общая лабораторная настройка conda указывает кэш пакетов
+в каталог без прав на запись.
+
+## Утилиты без MIDAS и CMake
+
+Для `modbus_tool`, `modbus_scanner`, `psu_bench` MIDAS не нужен.
 
 ```bash
-mkdir build
-cd build
+# macOS (Homebrew: boost, nlohmann-json)
+B=$(brew --prefix)
+c++ -std=c++17 -O2 -Iinclude -I$B/include src/utils/modbus_tool.cpp src/modbus/modbus_rtu.cpp \
+    src/modbus/modbus_crc.cpp src/modbus/board_client.cpp src/utils/logger.cpp -o modbus_tool
+c++ -std=c++17 -O2 -Iinclude -I$B/include src/utils/modbus_scanner.cpp src/modbus/modbus_rtu.cpp \
+    src/modbus/modbus_crc.cpp src/utils/logger.cpp -o modbus_scanner
 
-# Standard build
-cmake ..
-
-# Or with specific options
-cmake \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/usr/local \
-  -DBUILD_TESTS=ON \
-  ..
+# cvme1 (conda)
+G=$HOME/miniforge3/envs/gcc13
+$G/bin/x86_64-conda-linux-gnu-g++ -std=c++17 -O2 -Iinclude -isystem $G/include \
+    tests/psu_bench.cpp src/power/owon_psu.cpp src/power/power_controller.cpp \
+    src/utils/logger.cpp src/utils/config_loader.cpp -o psu_bench -static-libstdc++ -static-libgcc -pthread
 ```
 
-### 3. Build
+## Проверка без железа
 
 ```bash
-# Build all targets
-make -j$(nproc)
+python3 tests/fake_modbus_slave.py --address 1 --state /tmp/board.json   # печатает /dev/pts/N
+./bin/modbus_tool /dev/pts/N 1 info
 
-# Or build specific target
-make danss_frontend
-make danss_core
+python3 tests/mock_owon_server.py 15000 &
+./bin/test_owon_psu 127.0.0.1 15000
+./bin/test_psu_worker 127.0.0.1 15000
 ```
 
-### 4. Install (optional)
+## Частые проблемы
 
-```bash
-sudo make install
-```
-
-This will install:
-- `danss_frontend` binary to `/usr/local/bin/`
-- Configuration files to `/usr/local/etc/danss/`
-
-## Configuration
-
-### 1. Generate Full Board Configuration
-
-For 240 boards across 8 RS-485 branches:
-
-```bash
-cd config
-
-# Generate board map
-python3 generate_full_config.py > board_map_full.json
-
-# Generate EEPROM reference
-python3 generate_full_config.py --eeprom > eeprom_reference_full.json
-```
-
-### 2. Edit Configuration
-
-Edit `config/board_map.json` or `config/board_map_full.json`:
-
-- Verify serial port device paths (`/dev/ttyUSB0-7`)
-- Adjust baud rates if needed
-- Enable/disable specific boards
-- Adjust polling intervals
-
-### 3. Setup Serial Ports
-
-```bash
-# Check available USB-RS485 adapters
-ls -l /dev/ttyUSB*
-
-# Add user to dialout group (for serial port access)
-sudo usermod -a -G dialout $USER
-
-# Set permissions (if needed)
-sudo chmod 666 /dev/ttyUSB*
-
-# For persistent permissions, create udev rule:
-sudo nano /etc/udev/rules.d/99-usb-serial.rules
-# Add:
-# SUBSYSTEM=="tty", ATTRS{idVendor}=="xxxx", MODE="0666"
-
-# Reload udev
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-## Testing
-
-### 1. Test Modbus Communication
-
-Create a simple test program to verify RS-485 communication:
-
-```bash
-cd build
-./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400
-```
-
-### 2. Run Unit Tests (if enabled)
-
-```bash
-cd build
-ctest --output-on-failure
-```
-
-### 3. Test Frontend Without MIDAS
-
-```bash
-./bin/danss_frontend --standalone
-```
-
-## Troubleshooting
-
-### CMake can't find MIDAS
-
-```bash
-# Make sure MIDASSYS is set
-echo $MIDASSYS
-
-# If not set:
-export MIDASSYS=/opt/midas
-export MIDAS_EXPTAB=/etc/exptab
-```
-
-### CMake can't find Boost
-
-```bash
-# Specify Boost root manually
-cmake -DBOOST_ROOT=/usr/local ..
-```
-
-### Serial port permission denied
-
-```bash
-# Check permissions
-ls -l /dev/ttyUSB0
-
-# Add user to dialout group
-sudo usermod -a -G dialout $USER
-
-# Log out and log back in for changes to take effect
-```
-
-### Modbus timeout errors
-
-- Check baud rate matches board settings
-- Verify cable connections
-- Check for RS-485 termination resistors
-- Try increasing timeout in `board_map.json`:
-  ```json
-  "modbus_timeout_ms": 2000,
-  "response_timeout_ms": 1000
-  ```
-
-### Build errors with old GCC
-
-The project requires C++17. Upgrade GCC or use a newer compiler:
-
-```bash
-# Check GCC version
-gcc --version
-
-# Ubuntu: install newer GCC
-sudo apt-get install gcc-9 g++-9
-export CC=gcc-9
-export CXX=g++-9
-cmake ..
-```
-
-## Development Build
-
-For development with debug symbols and sanitizers:
-
-```bash
-mkdir build-debug
-cd build-debug
-
-cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_CXX_FLAGS="-fsanitize=address -fsanitize=undefined" \
-  ..
-
-make -j$(nproc)
-```
-
-## Cross-Compilation (for embedded targets)
-
-Example for ARM target:
-
-```bash
-mkdir build-arm
-cd build-arm
-
-cmake \
-  -DCMAKE_TOOLCHAIN_FILE=../cmake/arm-toolchain.cmake \
-  -DCMAKE_BUILD_TYPE=Release \
-  ..
-
-make -j$(nproc)
-```
-
-## Performance Profiling
-
-```bash
-# Build with profiling enabled
-cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
-make
-
-# Run with profiler
-perf record -g ./bin/danss_frontend
-perf report
-```
-
-## Next Steps
-
-After successful build:
-
-1. Configure your MIDAS experiment
-2. Test serial communication with boards
-3. Run frontend in test mode
-4. Integrate with MIDAS DAQ
-5. Set up monitoring and alarms
-
-See [README.md](README.md) for runtime instructions.
+- **`MIDASSYS environment variable not set`** — задайте `MIDASSYS` перед `cmake`.
+- **`multiple definition of main` при сборке `danss_frontend`** — старый CMakeLists линковал
+  `mfe`; в текущем этого нет.
+- **`zlib.h not found` на cvme1** — conda-компилятор не видит `/usr/include`; используйте zlib
+  из conda и `-isystem $G/include`.
+- **Порт на macOS** — `/dev/cu.usbserial-*`, не `/dev/tty.*`.
+- **Нет доступа к порту на Linux** — пользователь в группе `dialout` или `sudo`.

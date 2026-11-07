@@ -1,193 +1,101 @@
 # DANSS Slow Control & DAQ System
 
-MIDAS-based slow control and data acquisition system for DANSS detector.
+MIDAS-based slow control for the DANSS-2 test stand and the DANSS detector:
+SiPM electronics boards over Modbus RTU / RS-485 and the OWON ODP6033 power supply
+(SiPM bias HV and electronics power) over SCPI/TCP.
 
-## Overview
+Full project context (status, decisions, hardware facts): [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) (Russian).
 
-- **Multi-branch RS-485**: Support for 4-8 RS-485 branches
-- **Board Management**: ~240 detector boards with Modbus RTU protocol
-- **Periodic Polling**: 5-minute cycles for currents, temperatures, trip status
-- **EEPROM Validation**: Daily verification and automatic correction
-- **Run Synchronization**: Strict Calibration ↔ Physics Run mode transitions
+## What works (November 2026)
 
-## Features
+| Component | Status |
+|---|---|
+| `ModbusRTU` — Modbus RTU master (length-based framing, CRC, exceptions, statistics) | tested on hardware |
+| Register map v2 (`constants.h`, `types.h`), `BoardClient` (CSR, scratchpad, verified DAC writes, address assignment) | tested on board 17 |
+| `modbus_scanner` — find boards on a bus | tested on hardware |
+| `modbus_tool` — inspect and service one board | tested on board 17 |
+| `ConfigLoader` — `board_map.json`, `eeprom_reference.json`, `power_supply.json` with validation | unit tests |
+| `OwonPSU` + `PowerSupplyController` — thresholds, interlock, HV ramps, emergency off | tested on the OWON (no load) |
+| `danss_psu_fe` — MIDAS (TMFE) frontend for the power supply | tested on MIDAS with the OWON emulator |
+| Board polling (`BoardRegistry`, `PeriodicPoller`), SlowControl frontend | next step |
+| EEPROM/scratchpad daily check, run state machine, WFD frontend | planned |
 
-- Modbus RTU over RS-485 (Boost.Asio based)
-- MIDAS 2.1 frontend integration
-- JSON-based board configuration
-- EEPROM reference data management
-- Multi-threaded polling (one thread per RS-485 branch)
-- MIDAS alarm system with future Telegram support
+## Board protocol
 
-## Board Protocol (Modbus RTU)
-
-### Supported Functions
-- `0x03` - Read Holding Registers (DAC settings, CSR, counters)
-- `0x04` - Read Input Registers (ADC, currents, temperatures)
-- `0x06` - Write Single Register
-- `0x10` - Write Multiple Registers
-
-### Register Map (v2, October 2026)
-
-Full map: [doc/MODBUS_MAP_v2.md](doc/MODBUS_MAP_v2.md).
-
-Input (read only):
-- `0` - update counter (increments at the end of every board cycle)
-- `1` - HV status: trip per analog board (3 bits) + HV enable per channel (12 bits)
-- `2` - gain and trip enable per analog board
-- `3-14` - SiPM leakage currents (12 channels)
-- `15-26` - SiPM temperatures (12 channels)
-- `27` - CPU temperature
-- `100-147` - thermometer IDs (12 × 4 registers), `148-149` - CPU ID
-- `150-245` - DAC readback, `246` - CPU temperature sensor offset
-- `250-761` - scratchpad readback (512 words)
-
-Holding (read/write):
-- `0-95` - DAC settings
-- `96` - Counter ON/OFF (SiPM HV enable), bit per channel
-- `97` - gain and trip enable, bit per analog board
-- `98` - Global CSR (commands 101/103/105, status 0/10/20)
-- `99` - delay between cycles
-- `100` - device address (settable only from factory address 247)
+Modbus RTU, **38400 baud, 8N1**. Functions 0x03, 0x04, 0x06, 0x10.
+Register map v2 (input 0–27 status, 100–149 IDs, 150–245 DAC readback, 250–761 scratchpad;
+holding 0–95 DAC, 96 HV enable, 97 gain/trip enable, 98 CSR, 99 cycle delay, 100 address):
+see [doc/MODBUS_MAP_v2.md](doc/MODBUS_MAP_v2.md).
 
 ## Requirements
 
-### System
-- Linux (tested on Ubuntu 20.04+, CentOS 7+)
-- MIDAS 2.1 or later
-- Boost 1.65+ (system, thread components)
-- CMake 3.12+
-- GCC 7+ or Clang 6+
-
-### Hardware
-- 4-8 × USB-RS485 adapters (/dev/ttyUSB0-7)
-- RS-485 network with ~240 detector boards
+- Linux (cvme1: Linux Mint 19.1 with a conda GCC 13 toolchain; Ubuntu 22.04/24.04) or macOS for the utilities
+- MIDAS, commit `c69c0853930b226e96090725a0ba5cb2b4293a14` (same on all machines)
+- Boost (Asio; system, thread), nlohmann/json (fetched by CMake), CMake 3.16+, C++17 compiler
 
 ## Building
 
 ```bash
-# Set MIDAS environment
 export MIDASSYS=/path/to/midas
-export MIDAS_EXPTAB=/path/to/exptab
-
-# Clone and build
-git clone <repository-url> danss-slow-control
-cd danss-slow-control
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
+mkdir -p build && cd build
+cmake -DBUILD_TESTS=ON ..
+make -j4 && ctest
 ```
 
-## Configuration
-
-### Board Map (`config/board_map.json`)
-Defines the mapping of boards to RS-485 branches and Modbus addresses:
-
-```json
-{
-  "branches": [
-    {
-      "id": 0,
-      "device": "/dev/ttyUSB0",
-      "baud_rate": 38400,
-      "boards": [
-        {"address": 1, "name": "PMT-01-01"},
-        {"address": 2, "name": "PMT-01-02"}
-      ]
-    }
-  ]
-}
-```
-
-### EEPROM Reference (`config/eeprom_reference.json`)
-Contains reference thermometer IDs and CPU IDs for validation:
-
-```json
-{
-  "boards": [
-    {
-      "name": "PMT-01-01",
-      "thermometer_ids": ["28FF...", "28FF..."],
-      "cpu_id": "ABC123"
-    }
-  ]
-}
-```
+Targets: `danss_core`, `danss_frontend`, `modbus_scanner`, `modbus_tool`, `danss_psu_fe`;
+with tests: `test_config_loader`, `test_psu_worker`, `test_owon_psu`, `psu_bench`.
+cvme1 and manual builds: [doc/BUILD.md](doc/BUILD.md).
 
 ## Running
 
 ```bash
-# Scan RS-485 bus to discover boards
-./bin/modbus_scanner /dev/ttyUSB0
-
-# Test communication with specific board
-./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400
-
-# Start the frontend
-./bin/danss_frontend -e <experiment_name>
-
-# Monitor via MIDAS web interface
-# http://localhost:8080
+./bin/modbus_scanner -q -s 1 -e 247 /dev/ttyACM3          # find boards
+./bin/modbus_tool /dev/ttyACM3 1 info                     # one board, full register map
+./bin/modbus_tool /dev/ttyACM3 1 sp-dump backup_1.json    # backup before any write
+./bin/psu_bench --config ../config/power_supply.json info # power supply, read-only
+./bin/danss_psu_fe -- --config ../config/power_supply.json
 ```
+
+On macOS the serial port is `/dev/cu.usbserial-*`. Without hardware:
+`tests/fake_modbus_slave.py` (board emulator on a pty) and `tests/mock_owon_server.py` (OWON emulator).
+
+Docs: [MODBUS_TOOL.md](doc/MODBUS_TOOL.md), [MODBUS_SCANNER.md](doc/MODBUS_SCANNER.md),
+[ARCHITECTURE.md](doc/ARCHITECTURE.md), [BUILD.md](doc/BUILD.md), [QUICKSTART.md](QUICKSTART.md), [TODO.md](TODO.md).
+
+## Configuration
+
+- `config/board_map.json` — RS-485 branches and boards (`config/board_map_stand.json` for the DANSS-2 stand)
+- `config/eeprom_reference.json` — reference thermometer and CPU IDs
+- `config/power_supply.json` — OWON address and per-channel role, target, current, OVP/OCP, ramp, interlock
+
+`ConfigLoader` rejects invalid files with the file name and field path, e.g.
+`power_supply.json: power_supply.channels[0].ocp_limit_a: 3.2 вне допустимого диапазона 0.001…3.1`.
+Power-supply limits are checked against the ODP6033 (CH1/CH2 ≤ 60 V, CH3 ≤ 6 V, OCP ≤ 3.1 A),
+OVP must exceed the target, and SIPM_HV channels require the interlock.
 
 ## Architecture
 
 ```
-┌─────────────────┐
-│  MIDAS Frontend │
-│   (Main Loop)   │
-└────────┬────────┘
-         │
-    ┌────┴─────┐
-    │ RS-485   │
-    │ Manager  │ (4-8 threads)
-    └────┬─────┘
-         │
-    ┌────┴──────────┬──────────┬─────────┐
-    │               │          │         │
-┌───▼────┐    ┌────▼───┐  ┌───▼────┐  ┌▼─────┐
-│Branch 0│    │Branch 1│  │Branch 2│  │ ...  │
-│/ttyUSB0│    │/ttyUSB1│  │/ttyUSB2│  │      │
-└───┬────┘    └────┬───┘  └───┬────┘  └──────┘
-    │              │          │
-   ~60 boards    ~60 boards ~60 boards
+MIDAS server (ODB, mserver, mlogger, mhttpd)
+   ▲                        ▲
+danss_psu_fe               SlowControl FE (next)
+ PsuWorker                  PeriodicPoller / BoardRegistry
+ PowerSupplyController      BoardClient
+ OwonPSU ── TCP ── OWON     ModbusRTU ── RS-485 ── boards
 ```
 
-## Development Roadmap
-
-### Phase 1: Core Infrastructure ✓
-- [x] Project structure
-- [x] CMake configuration
-- [x] Modbus RTU implementation
-- [ ] JSON configuration loader
-- [ ] Board registry
-
-### Phase 2: RS-485 Management
-- [ ] Multi-branch manager
-- [ ] Periodic poller (5-min cycle)
-- [ ] EEPROM validator (daily check)
-
-### Phase 3: MIDAS Integration
-- [ ] Frontend skeleton
-- [ ] SlowControl equipment
-- [ ] MIDAS alarm integration
-- [ ] State machine (Calibration ↔ Physics)
-
-### Phase 4: Advanced Features
-- [ ] Error recovery
-- [ ] Logging and diagnostics
-- [ ] Telegram notifications
-- [ ] Unit tests
+Separate programs for the power supply and the boards, so a failure in one does not affect the other.
 
 ## License
 
-[Specify license here]
+GPL-3.0, see [LICENSE](LICENSE).
 
 ## Authors
 
-Aleksandr - Initial development
+- Aleksandr Mefodev — architecture, development
+- Mariya Kolupanova — Modbus and power-supply debugging, tests
 
 ## Acknowledgments
 
 - MIDAS DAQ framework
-- Boost.Asio library
+- Boost.Asio, nlohmann/json
