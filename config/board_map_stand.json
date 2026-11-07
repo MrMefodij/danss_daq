@@ -1,0 +1,26 @@
+{
+  "description": "Тестовый стенд ДАНСС-2: одна ветка на cvme1. Плата 3 запрограммирована, но не установлена (enabled: false).",
+  "system": {
+    "poll_interval_sec": 300,
+    "eeprom_check_interval_sec": 86400,
+    "modbus_timeout_ms": 1000,
+    "response_timeout_ms": 500,
+    "max_retries": 3,
+    "retry_delay_ms": 100
+  },
+  "branches": [
+    {
+      "id": 0,
+      "device": "/dev/ttyACM3",
+      "baud_rate": 38400,
+      "data_bits": 8,
+      "parity": "N",
+      "stop_bits": 1,
+      "boards": [
+        { "address": 1, "name": "STAND-01", "enabled": true },
+        { "address": 2, "name": "STAND-02", "enabled": true },
+        { "address": 3, "name": "STAND-03", "enabled": false }
+      ]
+    }
+  ]
+}
