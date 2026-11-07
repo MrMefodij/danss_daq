@@ -169,7 +169,7 @@ modbus.write_multiple_registers(1, 0, dac_values); // DAC 0-95
     {
       "id": 0,
       "device": "/dev/ttyUSB0",
-      "baud_rate": 19200,
+      "baud_rate": 38400,
       "boards": [
         {"address": 1, "name": "PMT-01-01"}
       ]
@@ -223,7 +223,7 @@ done
 ### Test Modbus
 
 ```bash
-./bin/danss_frontend --test-modbus /dev/ttyUSB0 19200
+./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400
 ```
 
 ### Run Standalone

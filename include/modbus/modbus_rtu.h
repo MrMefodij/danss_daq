@@ -19,8 +19,8 @@ class ModbusRTU {
 public:
     /// @brief Constructor
     /// @param device Serial device path (e.g., /dev/ttyUSB0)
-    /// @param baud_rate Communication speed (default: 19200)
-    explicit ModbusRTU(const std::string& device, uint32_t baud_rate = 19200);
+    /// @param baud_rate Communication speed (default: constants::DEFAULT_BAUD_RATE = 38400)
+    explicit ModbusRTU(const std::string& device, uint32_t baud_rate = 38400);
     
     /// @brief Destructor - closes serial port
     ~ModbusRTU();

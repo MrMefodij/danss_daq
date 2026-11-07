@@ -92,10 +92,10 @@ Before running the full system, test communication with a specific board:
 
 ```bash
 # From build directory - test board at address 1 (default)
-./bin/danss_frontend --test-modbus /dev/ttyUSB0 19200
+./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400
 
 # Test board at specific address (e.g., address 5)
-./bin/danss_frontend --test-modbus /dev/ttyUSB0 19200 5
+./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400 5
 ```
 
 Expected output:
@@ -129,7 +129,7 @@ If you see timeout errors:
   ```
 - **Test specific address found by scanner:**
   ```bash
-  ./bin/danss_frontend --test-modbus /dev/ttyUSB0 19200 <address>
+  ./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400 <address>
   ```
 
 ## Step 5: Configure Your System

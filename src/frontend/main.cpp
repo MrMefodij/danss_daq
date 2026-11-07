@@ -34,8 +34,8 @@ void print_help() {
     std::cout << "\n";
     std::cout << "Examples:\n";
     std::cout << "  danss_frontend -e DANSS\n";
-    std::cout << "  danss_frontend --test-modbus /dev/ttyUSB0 19200\n";
-    std::cout << "  danss_frontend --test-modbus /dev/ttyUSB0 19200 5\n";
+    std::cout << "  danss_frontend --test-modbus /dev/ttyUSB0 38400\n";
+    std::cout << "  danss_frontend --test-modbus /dev/ttyUSB0 38400 5\n";
     std::cout << "  danss_frontend --standalone -v\n";
     std::cout << "\n";
     std::cout << "For scanning multiple addresses, use modbus_scanner:\n";

@@ -54,7 +54,7 @@ void print_usage() {
     std::cout << "Usage: modbus_scanner [options] <device> [baud_rate]\n\n";
     std::cout << "Arguments:\n";
     std::cout << "  device         Serial device path (e.g., /dev/ttyUSB0)\n";
-    std::cout << "  baud_rate      Communication speed (default: 19200)\n\n";
+    std::cout << "  baud_rate      Communication speed (default: 38400)\n\n";
     std::cout << "Options:\n";
     std::cout << "  -h, --help           Show this help\n";
     std::cout << "  -s, --start <addr>   Start address (default: 1)\n";
@@ -68,7 +68,7 @@ void print_usage() {
     std::cout << "Examples:\n";
     std::cout << "  modbus_scanner /dev/ttyUSB0\n";
     std::cout << "  modbus_scanner /dev/ttyUSB0 9600\n";
-    std::cout << "  modbus_scanner -s 1 -e 30 /dev/ttyUSB0 19200\n";
+    std::cout << "  modbus_scanner -s 1 -e 30 /dev/ttyUSB0 38400\n";
     std::cout << "  modbus_scanner --quick /dev/ttyUSB0\n";
     std::cout << "  modbus_scanner --show-addresses /dev/ttyUSB0\n";
     std::cout << "\n";
@@ -241,7 +241,7 @@ int main(int argc, char* argv[]) {
     
     // Parse arguments
     std::string device;
-    uint32_t baud_rate = 19200;
+    uint32_t baud_rate = constants::DEFAULT_BAUD_RATE;
     uint8_t start_addr = 1;
     uint8_t end_addr = 247;
     uint32_t timeout_ms = 500;

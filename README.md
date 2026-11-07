@@ -89,7 +89,7 @@ Defines the mapping of boards to RS-485 branches and Modbus addresses:
     {
       "id": 0,
       "device": "/dev/ttyUSB0",
-      "baud_rate": 19200,
+      "baud_rate": 38400,
       "boards": [
         {"address": 1, "name": "PMT-01-01"},
         {"address": 2, "name": "PMT-01-02"}
@@ -121,7 +121,7 @@ Contains reference thermometer IDs and CPU IDs for validation:
 ./bin/modbus_scanner /dev/ttyUSB0
 
 # Test communication with specific board
-./bin/danss_frontend --test-modbus /dev/ttyUSB0 19200
+./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400
 
 # Start the frontend
 ./bin/danss_frontend -e <experiment_name>

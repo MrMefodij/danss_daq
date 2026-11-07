@@ -16,7 +16,7 @@
 ### Basic Scan
 
 ```bash
-# Scan all addresses (1-247) on /dev/ttyUSB0 at 19200 baud
+# Scan all addresses (1-247) on /dev/ttyUSB0 at 38400 baud
 ./modbus_scanner /dev/ttyUSB0
 
 # Scan with different baud rate
@@ -74,7 +74,7 @@
 
 Scan parameters:
   Device: /dev/ttyUSB0
-  Baud rate: 19200
+  Baud rate: 38400
   Address range: 1 - 30
   Timeout: 500 ms
   Delay between scans: 100 ms
@@ -255,7 +255,7 @@ Make sure the baud rate matches the board firmware:
 ```bash
 # Try common baud rates if unsure
 ./modbus_scanner /dev/ttyUSB0 9600
-./modbus_scanner /dev/ttyUSB0 19200
+./modbus_scanner /dev/ttyUSB0 38400
 ./modbus_scanner /dev/ttyUSB0 38400
 ```
 
@@ -352,7 +352,7 @@ ls -l /dev/ttyS*
 2. **Try different baud rates**
    ```bash
    ./modbus_scanner /dev/ttyUSB0 9600
-   ./modbus_scanner /dev/ttyUSB0 19200
+   ./modbus_scanner /dev/ttyUSB0 38400
    ./modbus_scanner /dev/ttyUSB0 115200
    ```
 
@@ -400,7 +400,7 @@ cat branch0_scan.txt
 # Copy the suggested configuration to board_map.json
 
 # Step 6: Test with main program
-./danss_frontend --test-modbus /dev/ttyUSB0 19200
+./danss_frontend --test-modbus /dev/ttyUSB0 38400
 ```
 
 ## See Also

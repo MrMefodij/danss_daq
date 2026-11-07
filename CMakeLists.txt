@@ -40,6 +40,9 @@ link_directories(
     ${MIDAS_DIR}/linux/lib
 )
 
+# Цели MIDAS (midas::midas) с путями к mvodb/midasio и zlib, с которыми MIDAS собран
+find_package(Midas REQUIRED PATHS ${MIDAS_DIR} NO_DEFAULT_PATH)
+
 # Find Boost
 find_package(Boost 1.65 REQUIRED COMPONENTS system thread)
 if(Boost_FOUND)
@@ -72,6 +75,7 @@ include_directories(
 set(MODBUS_SOURCES
     src/modbus/modbus_rtu.cpp
     src/modbus/modbus_crc.cpp
+    src/modbus/board_client.cpp
 )
 
 set(RS485_SOURCES
@@ -96,6 +100,7 @@ set(SYNC_SOURCES
 set(POWER_SOURCES
     src/power/owon_psu.cpp
     src/power/power_controller.cpp
+    src/power/psu_worker.cpp
 )
 
 set(UTILS_SOURCES
@@ -131,10 +136,11 @@ add_executable(danss_frontend
     ${FRONTEND_SOURCES}
 )
 
+# Без mfe: у danss_frontend свой main(), а libmfe.a приносит второй main() и требует
+# equipment[]/frontend_name из старого C-API. Equipment будет на TMFE, как danss_psu_fe.
 target_link_libraries(danss_frontend
     danss_core
-    mfe
-    midas
+    midas::midas
     ${Boost_LIBRARIES}
     Threads::Threads
 #    rt
@@ -152,8 +158,31 @@ target_link_libraries(modbus_scanner
     Threads::Threads
 )
 
+# Обслуживание одной платы: чтение/запись регистров, DAC с проверкой, scratchpad, адрес
+add_executable(modbus_tool
+    src/utils/modbus_tool.cpp
+)
+
+target_link_libraries(modbus_tool
+    danss_core
+    ${Boost_LIBRARIES}
+    Threads::Threads
+)
+
+# PowerSupply frontend (OWON ODP6033) — отдельная программа на TMFE
+add_executable(danss_psu_fe
+    src/frontend/psu_frontend.cxx
+)
+
+target_link_libraries(danss_psu_fe
+    danss_core
+    midas::midas
+    ${Boost_LIBRARIES}
+    Threads::Threads
+)
+
 # Install targets
-install(TARGETS danss_frontend modbus_scanner
+install(TARGETS danss_frontend modbus_scanner modbus_tool danss_psu_fe
     RUNTIME DESTINATION bin
 )
 

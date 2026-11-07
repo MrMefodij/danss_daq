@@ -11,7 +11,7 @@
     {
       "id": 0,
       "device": "/dev/ttyUSB0",
-      "baud_rate": 19200,
+      "baud_rate": 38400,
       "data_bits": 8,
       "parity": "N",
       "stop_bits": 1,
@@ -36,7 +36,7 @@
     {
       "id": 1,
       "device": "/dev/ttyUSB1",
-      "baud_rate": 19200,
+      "baud_rate": 38400,
       "data_bits": 8,
       "parity": "N",
       "stop_bits": 1,

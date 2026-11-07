@@ -102,7 +102,7 @@ struct BoardConfig {
 struct BranchConfig {
     uint8_t id;                 ///< Branch number (0-7)
     std::string device;         ///< Serial device path (e.g., /dev/ttyUSB0)
-    uint32_t baud_rate;         ///< Communication speed (default: 19200)
+    uint32_t baud_rate;         ///< Communication speed (default: 38400)
     uint8_t data_bits;          ///< Data bits (default: 8)
     char parity;                ///< Parity: 'N', 'E', 'O' (default: 'N')
     uint8_t stop_bits;          ///< Stop bits (default: 1)

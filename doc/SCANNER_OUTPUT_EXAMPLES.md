@@ -15,7 +15,7 @@ Output:
 
 Scan parameters:
   Device: /dev/ttyUSB0
-  Baud rate: 19200
+  Baud rate: 38400
   Address range: 1 - 30
   Timeout: 500 ms
   Delay between scans: 100 ms
@@ -41,7 +41,7 @@ Output:
 
 Scan parameters:
   Device: /dev/ttyUSB0
-  Baud rate: 19200
+  Baud rate: 38400
   Address range: 1 - 30
   Timeout: 500 ms
   Delay between scans: 100 ms
@@ -73,7 +73,7 @@ Output:
 
 Scan parameters:
   Device: /dev/ttyUSB0
-  Baud rate: 19200
+  Baud rate: 38400
   Address range: 1 - 10
   Timeout: 500 ms
   Delay between scans: 100 ms

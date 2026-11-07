@@ -161,7 +161,7 @@ Create a simple test program to verify RS-485 communication:
 
 ```bash
 cd build
-./bin/danss_frontend --test-modbus /dev/ttyUSB0 19200
+./bin/danss_frontend --test-modbus /dev/ttyUSB0 38400
 ```
 
 ### 2. Run Unit Tests (if enabled)

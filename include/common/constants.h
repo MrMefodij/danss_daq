@@ -34,8 +34,8 @@ constexpr size_t MODBUS_RTU_MIN_FRAME_SIZE = 5; // Exception: address + FC + cod
 constexpr size_t MODBUS_RTU_MAX_FRAME_SIZE = 256;
 
 // Timing (per Modbus RTU specification)
-constexpr uint32_t MODBUS_T15_CHAR_US = 750;  // 1.5 character times at 19200 baud
-constexpr uint32_t MODBUS_T35_CHAR_US = 1750; // 3.5 character times at 19200 baud
+constexpr uint32_t MODBUS_T15_CHAR_US = 750;  // Modbus RTU: fixed 750 us above 19200 baud
+constexpr uint32_t MODBUS_T35_CHAR_US = 1750; // Modbus RTU: fixed 1.75 ms above 19200 baud
 
 // =============================================================================
 // Board Register Map — v2 (прошивка процессорной платы, октябрь 2026)
@@ -191,7 +191,7 @@ constexpr uint8_t DEFAULT_MAX_RETRIES = 3;
 constexpr uint32_t DEFAULT_RETRY_DELAY_MS = 100;
 
 // Serial port defaults
-constexpr uint32_t DEFAULT_BAUD_RATE = 19200;
+constexpr uint32_t DEFAULT_BAUD_RATE = 38400;  // прошивка плат v2; проверено на плате 17, 07.11.2026
 constexpr uint8_t DEFAULT_DATA_BITS = 8;
 constexpr char DEFAULT_PARITY = 'N';
 constexpr uint8_t DEFAULT_STOP_BITS = 1;

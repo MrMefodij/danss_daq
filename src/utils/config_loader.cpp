@@ -344,8 +344,8 @@ SystemConfig ConfigLoader::parse_system_config(const std::string& text, const st
 
     if (root.has("power_supply")) cfg.power_supply = parse_psu(root.object("power_supply"));
 
-    LOG_INFO("Config " + source + ": " + std::to_string(cfg.branches.size()) + " веток RS-485, "
-             + std::to_string(total_boards) + " плат");
+    LOG_INFO("Config " + source + ": веток RS-485: " + std::to_string(cfg.branches.size()) + ", плат: "
+             + std::to_string(total_boards));
     return cfg;
 }
 
@@ -386,7 +386,7 @@ std::map<std::string, BoardConfig> ConfigLoader::parse_eeprom_reference(const st
 
         if (!out.emplace(ref.name, ref).second) b.fail("name", "плата " + ref.name + " описана дважды");
     }
-    LOG_INFO("Config " + source + ": эталоны EEPROM для " + std::to_string(out.size()) + " плат");
+    LOG_INFO("Config " + source + ": эталонов EEPROM: " + std::to_string(out.size()));
     return out;
 }
 
@@ -403,9 +403,30 @@ PSUConfig ConfigLoader::parse_power_config(const std::string& text, const std::s
     const Node root(j, "", source);
     root.warn_unknown({"description", "power_supply"});
     PSUConfig cfg = parse_psu(root.object("power_supply"));
-    LOG_INFO("Config " + source + ": блок питания " + cfg.host + ":" + std::to_string(cfg.port) + ", "
-             + std::to_string(cfg.channels.size()) + " каналов");
+    LOG_INFO("Config " + source + ": блок питания " + cfg.host + ":" + std::to_string(cfg.port) + ", каналов: "
+             + std::to_string(cfg.channels.size()));
     return cfg;
+}
+
+std::string ConfigLoader::power_config_to_json(const PSUConfig& c) {
+    json ps;
+    ps["host"] = c.host;
+    ps["port"] = c.port;
+    ps["poll_interval_sec"] = c.poll_interval_sec;
+    ps["connect_timeout_ms"] = c.connect_timeout_ms;
+    ps["response_timeout_ms"] = c.response_timeout_ms;
+    ps["max_retries"] = c.max_retries;
+    ps["channels"] = json::array();
+    for (const auto& ch : c.channels) {
+        const char* role = ch.role == PSUChannelRole::CPU_POWER ? "CPU_POWER"
+                         : ch.role == PSUChannelRole::SIPM_HV   ? "SIPM_HV" : "UNUSED";
+        ps["channels"].push_back({{"channel", ch.channel}, {"role", role}, {"name", ch.name},
+                                  {"target_voltage_v", ch.target_voltage_v}, {"current_limit_a", ch.current_limit_a},
+                                  {"ovp_limit_v", ch.ovp_limit_v}, {"ocp_limit_a", ch.ocp_limit_a},
+                                  {"ramp_step_v", ch.ramp_step_v}, {"ramp_interval_ms", ch.ramp_interval_ms},
+                                  {"require_interlock", ch.require_interlock}});
+    }
+    return json{{"power_supply", ps}}.dump(2);
 }
 
 PSUConfig ConfigLoader::load_power_config(const std::string& filename) {

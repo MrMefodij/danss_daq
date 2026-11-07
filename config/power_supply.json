@@ -3,7 +3,7 @@
   "power_supply": {
     "host": "192.168.10.81",
     "port": 3000,
-    "poll_interval_sec": 300,
+    "poll_interval_sec": 10,
     "connect_timeout_ms": 2000,
     "response_timeout_ms": 1000,
     "max_retries": 3,

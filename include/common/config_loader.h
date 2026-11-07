@@ -47,6 +47,10 @@ public:
     static std::map<std::string, BoardConfig> parse_eeprom_reference(const std::string& json_text,
                                                                      const std::string& source);
     static PSUConfig parse_power_config(const std::string& json_text, const std::string& source);
+
+    /// @brief Обратное преобразование: PSUConfig -> текст power_supply.json.
+    /// parse_power_config(power_config_to_json(c)) даёт тот же конфиг.
+    static std::string power_config_to_json(const PSUConfig& config);
 };
 
 } // namespace danss

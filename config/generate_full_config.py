@@ -44,7 +44,7 @@ def generate_full_config(num_branches=8, boards_per_branch=30):
         branch = {
             "id": branch_id,
             "device": f"/dev/ttyUSB{branch_id}",
-            "baud_rate": 19200,
+            "baud_rate": 38400,
             "data_bits": 8,
             "parity": "N",
             "stop_bits": 1,

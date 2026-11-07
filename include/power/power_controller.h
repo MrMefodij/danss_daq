@@ -81,6 +81,18 @@ public:
 
     std::string get_last_error() const { return last_error_; }
 
+    /// @brief Прервать текущий разгон/спуск из другого потока (команда «выключить»
+    /// пришла посреди разгона). Канал остаётся на последнем выставленном напряжении;
+    /// флаг сбрасывается в начале следующей enable/disable_channel().
+    void abort_ramp();
+
+    /// @brief Заменить параметры каналов (новые цели, пороги, шаг разгона).
+    /// host/port не меняются — для этого нужен новый контроллер (вернёт false).
+    /// После замены нужно снова вызвать apply_protection_limits(): до этого HV не включится.
+    bool update_config(const PSUConfig& config);
+    PSUConfig config() const;
+    bool protections_ok() const;
+
 private:
     const PSUChannelConfig* find_channel(uint8_t channel) const;
 

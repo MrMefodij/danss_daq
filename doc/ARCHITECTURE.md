@@ -219,7 +219,7 @@ Bank: BDAT (Board Data)
 
 ```
 Read operation:
-  - Request transmission: ~5ms (at 19200 baud)
+  - Request transmission: ~5ms (at 38400 baud)
   - Board processing: ~10ms
   - Response transmission: ~20ms (typical)
   - Total per transaction: ~35ms

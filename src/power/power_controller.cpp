@@ -217,6 +217,7 @@ bool PowerSupplyController::ramp_voltage(uint8_t channel, double from_v, double 
 
 bool PowerSupplyController::enable_channel(uint8_t channel) {
     std::lock_guard<std::mutex> lock(mutex_);
+    abort_ramp_ = false;  // abort_ramp() относится к предыдущей операции
 
     const PSUChannelConfig* cfg = find_channel(channel);
     if (!cfg) {
@@ -297,6 +298,7 @@ bool PowerSupplyController::enable_channel(uint8_t channel) {
 
 bool PowerSupplyController::disable_channel(uint8_t channel) {
     std::lock_guard<std::mutex> lock(mutex_);
+    abort_ramp_ = false;
 
     const PSUChannelConfig* cfg = find_channel(channel);
     if (!cfg) {
@@ -406,6 +408,31 @@ std::vector<PSUChannelStatus> PowerSupplyController::poll() {
     }
 
     return result;
+}
+
+void PowerSupplyController::abort_ramp() {
+    abort_ramp_ = true;
+}
+
+bool PowerSupplyController::update_config(const PSUConfig& config) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (config.host != config_.host || config.port != config_.port) {
+        set_error("update_config(): host/port change needs a new controller");
+        return false;
+    }
+    config_ = config;
+    protections_ok_ = false;  // новые пороги ещё не записаны в прибор
+    return true;
+}
+
+PSUConfig PowerSupplyController::config() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return config_;
+}
+
+bool PowerSupplyController::protections_ok() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return protections_ok_;
 }
 
 void PowerSupplyController::set_error(const std::string& error) {
