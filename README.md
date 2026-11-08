@@ -96,7 +96,7 @@ GPL-3.0, see [LICENSE](LICENSE).
 ## Authors
 
 - Aleksandr Mefodev — architecture, development
-- Mariya Kolupanova — Modbus and power-supply debugging, tests
+- Mariya Kolupanova — Modbus and power-supply development, debugging
 
 ## Acknowledgments
 
