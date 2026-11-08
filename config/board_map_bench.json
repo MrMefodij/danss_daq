@@ -1,0 +1,24 @@
+{
+  "description": "Стол: одна процессорная плата (адрес 17) через USB-RS485 на Mac. Порт поправьте под себя (ls /dev/cu.usbserial*).",
+  "system": {
+    "poll_interval_sec": 10,
+    "eeprom_check_interval_sec": 86400,
+    "modbus_timeout_ms": 1000,
+    "response_timeout_ms": 500,
+    "max_retries": 2,
+    "retry_delay_ms": 100
+  },
+  "branches": [
+    {
+      "id": 0,
+      "device": "/dev/cu.usbserial-1140",
+      "baud_rate": 38400,
+      "data_bits": 8,
+      "parity": "N",
+      "stop_bits": 1,
+      "boards": [
+        { "address": 17, "name": "BENCH-17", "enabled": true }
+      ]
+    }
+  ]
+}

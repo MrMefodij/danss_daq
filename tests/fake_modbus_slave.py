@@ -2,7 +2,8 @@
 
 Нужен, чтобы проверять modbus_scanner и modbus_tool без железа (Linux, macOS).
 
-  python3 tests/fake_modbus_slave.py [--address 1] [--state board.json] [--period 0.5]
+  python3 tests/fake_modbus_slave.py [--address 1[,2,...]] [--state board.json] [--period 0.5]
+                                     [--analog 7] [--control control.txt]
 
 Печатает имя устройства (например /dev/pts/3 или /dev/ttys005) — его и передавайте утилитам.
 
@@ -15,8 +16,19 @@
     в ближайшем цикле, после 103/105 плата 0.3 с не отвечает (запись во flash);
   - scratchpad 512 слов, контрольная сумма 0xAA55; --state хранит его между запусками:
     «перезагрузка платы» = перезапуск имитатора с тем же --state;
-  - адрес (holding 100) записывается только на заводском 247, начинает действовать
-    после сохранения и перезагрузки; со стёртым scratchpad плата стартует на 247.
+  - адрес (holding 100) записывается только на заводском 247 и начинает действовать сразу
+    после сохранения (подтверждено 07.11.2026); со стёртым scratchpad плата стартует на 247;
+  - scratchpad загружается в рабочие регистры при старте (как у реальной платы);
+  - несколько плат на одной «шине»: --address 1,2,4 (у каждой свой файл <--state>_<адрес>);
+  - --analog — маска подключённых аналоговых плат (бит на плату, по умолчанию 7 = все три).
+    Каналы неподключённой платы — как у платы 17 без периферии: температура 0x8001,
+    ID термометра 0, обратное чтение DAC 0;
+  - --control файл — сценарии сбоев для тестов: дописывайте строки «<адрес> <команда> [арг]»:
+      freeze / unfreeze   — цикл платы стоит (счётчик не растёт)
+      silent / talk       — плата перестаёт / снова начинает отвечать
+      reboot              — перезагрузка (счётчик с нуля, уставки из scratchpad)
+      trip <маска>        — биты trip по аналоговым платам
+      analog <маска>      — какие аналоговые платы подключены
 """
 import argparse
 import json
@@ -42,8 +54,12 @@ def crc(b):
 
 
 class Board:
-    def __init__(self, address, state_file, period):
+    def __init__(self, address, state_file, period, analog_mask=7):
         self.lock = threading.Lock()
+        self.frozen = False
+        self.silent = False
+        self.trip_mask = 0
+        self.analog_mask = analog_mask
         self.state_file = state_file
         self.period = period
         self.counter = 0
@@ -67,7 +83,35 @@ class Board:
         else:
             self.address = FACTORY
         self.holding[100] = self.address
-        self.readback = self.holding[0:96]
+        self.readback = self._readback()
+
+    def analog(self, board):
+        return (self.analog_mask >> board) & 1 == 1
+
+    def reboot(self):
+        with self.lock:
+            self.counter = 0
+            self.pending_cmd = None
+            self.erased = False
+            if self.sp_ok():
+                self.holding[0:96] = self.sp[0:96]
+                self.holding[96] = self.sp[96]
+                self.holding[99] = self.sp[99]
+            self.readback = self._readback()
+
+    def _readback(self):
+        return [self.holding[i] if self.analog(i // 32) else 0 for i in range(96)]
+
+    def control(self, cmd, arg):
+        with self.lock:
+            if cmd == "freeze": self.frozen = True
+            elif cmd == "unfreeze": self.frozen = False
+            elif cmd == "silent": self.silent = True
+            elif cmd == "talk": self.silent = False
+            elif cmd == "trip": self.trip_mask = int(arg, 0)
+            elif cmd == "analog": self.analog_mask = int(arg, 0)
+        if cmd == "reboot":
+            self.reboot()
 
     def sp_ok(self):
         return sum(self.sp) & 0xFFFF == 0xAA55
@@ -85,6 +129,8 @@ class Board:
 
     def cycle(self):
         with self.lock:
+            if self.frozen:
+                return
             cmd, self.pending_cmd = self.pending_cmd, None
             if cmd is not None:
                 status = 0
@@ -109,31 +155,32 @@ class Board:
                     else:
                         self._save_sp(self.holding[100])
                         self.erased = False
+                        self.address = self.holding[100]  # новый адрес действует сразу
                         self.busy_until = time.time() + 0.3
                 else:
                     status = 10
                 self.holding[98] = status
-            self.readback = list(self.holding[0:96])
+            self.readback = self._readback()
             self.counter = (self.counter + 1) & 0xFFFF
 
     def input_reg(self, r):
         if r == 0:
             return self.counter
         if r == 1:
-            return self.holding[96] & 0x0FFF
+            return (self.holding[96] & 0x0FFF) | ((self.trip_mask & self.analog_mask & 0x7) << 12)
         if r == 2:
             return self.holding[97] & 0x0707  # допущение: раскладка как у input 2
         if 3 <= r <= 14:
             return 1000 + r - 3
         if 15 <= r <= 26:
-            return 2000 + r - 15
+            return 2000 + r - 15 if self.analog((r - 15) // 4) else 0x8001
         if r == 27:
             return 3000
         if 28 <= r <= 99 or 247 <= r <= 249:
             return 0
         if 100 <= r <= 147:
             t, w = divmod(r - 100, 4)
-            return [0x28FF, 0x641E, 0x8316, 0x0550 + t][w]
+            return [0x28FF, 0x641E, 0x8316, 0x0550 + t][w] if self.analog(t // 4) else 0
         if r == 148:
             return 0x1234
         if r == 149:
@@ -151,7 +198,7 @@ class Board:
     def handle(self, frame):
         """frame без CRC -> ответ без CRC или None (молчание)"""
         addr, fc = frame[0], frame[1]
-        if addr != self.address or time.time() < self.busy_until:
+        if addr != self.address or self.silent or time.time() < self.busy_until:
             return None
         start = (frame[2] << 8) | frame[3]
         with self.lock:
@@ -208,21 +255,39 @@ def frame_len(buf):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--address", type=int, default=1)
+    ap.add_argument("--address", default="1", help="адрес или список через запятую")
+    ap.add_argument("--analog", type=lambda x: int(x, 0), default=7)
+    ap.add_argument("--control", default="")
     ap.add_argument("--state", default="")
     ap.add_argument("--period", type=float, default=0.5)
     a = ap.parse_args()
 
-    board = Board(a.address, a.state, a.period)
+    addrs = [int(x) for x in a.address.split(",")]
+    boards = []
+    for ad in addrs:
+        state = a.state if len(addrs) == 1 else (f"{a.state}_{ad}" if a.state else "")
+        boards.append(Board(ad, state, a.period, a.analog))
     master, slave = pty.openpty()
     tty.setraw(slave)
     print(os.ttyname(slave), flush=True)
-    print(f"board address {board.address}, scratchpad {'OK' if board.sp_ok() else 'erased'}", file=sys.stderr, flush=True)
+    for b in boards:
+        print(f"board address {b.address}, scratchpad {'OK' if b.sp_ok() else 'erased'}", file=sys.stderr, flush=True)
 
     def ticker():
+        done = 0
         while True:
-            time.sleep(board.period)
-            board.cycle()
+            time.sleep(a.period)
+            for b in boards:
+                b.cycle()
+            if a.control and os.path.exists(a.control):
+                lines = open(a.control).read().splitlines()
+                for line in lines[done:]:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        for b in boards:
+                            if b.address == int(parts[0]):
+                                b.control(parts[1], parts[2] if len(parts) > 2 else "0")
+                done = len(lines)
 
     threading.Thread(target=ticker, daemon=True).start()
 
@@ -241,7 +306,11 @@ def main():
             if crc(frame[:-2]) != frame[-2:]:
                 buf = b""
                 break
-            reply = board.handle(frame[:-2])
+            reply = None
+            for b in boards:
+                reply = b.handle(frame[:-2])
+                if reply is not None:
+                    break
             if reply is not None:
                 os.write(master, reply + crc(reply))
 

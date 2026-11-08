@@ -17,7 +17,8 @@ Full project context (status, decisions, hardware facts): [PROJECT_CONTEXT.md](P
 | `ConfigLoader` — `board_map.json`, `eeprom_reference.json`, `power_supply.json` with validation | unit tests |
 | `OwonPSU` + `PowerSupplyController` — thresholds, interlock, HV ramps, emergency off | tested on the OWON (no load) |
 | `danss_psu_fe` — MIDAS (TMFE) frontend for the power supply | tested on MIDAS with the OWON emulator |
-| Board polling (`BoardRegistry`, `PeriodicPoller`), SlowControl frontend | next step |
+| Board polling (`BoardRegistry`, `PeriodicPoller`, `DataCollector`) | tested on board 17 and the multi-board emulator |
+| `danss_sc_fe` — MIDAS (TMFE) frontend for the boards (equipment `SlowControl`) | tested on MIDAS with the board emulator |
 | EEPROM/scratchpad daily check, run state machine, WFD frontend | planned |
 
 ## Board protocol
@@ -42,8 +43,8 @@ cmake -DBUILD_TESTS=ON ..
 make -j4 && ctest
 ```
 
-Targets: `danss_core`, `danss_frontend`, `modbus_scanner`, `modbus_tool`, `danss_psu_fe`;
-with tests: `test_config_loader`, `test_psu_worker`, `test_owon_psu`, `psu_bench`.
+Targets: `danss_core`, `danss_frontend`, `modbus_scanner`, `modbus_tool`, `danss_psu_fe`, `danss_sc_fe`;
+with tests: `test_config_loader`, `test_psu_worker`, `test_owon_psu`, `psu_bench`, `test_poller`.
 cvme1 and manual builds: [doc/BUILD.md](doc/BUILD.md).
 
 ## Running
@@ -54,6 +55,8 @@ cvme1 and manual builds: [doc/BUILD.md](doc/BUILD.md).
 ./bin/modbus_tool /dev/ttyACM3 1 sp-dump backup_1.json    # backup before any write
 ./bin/psu_bench --config ../config/power_supply.json info # power supply, read-only
 ./bin/danss_psu_fe -- --config ../config/power_supply.json
+./bin/danss_frontend --standalone -c ../config/board_map_bench.json  # poll boards without MIDAS
+./bin/danss_sc_fe -- --config ../config/board_map_stand.json
 ```
 
 On macOS the serial port is `/dev/cu.usbserial-*`. Without hardware:
@@ -78,7 +81,7 @@ OVP must exceed the target, and SIPM_HV channels require the interlock.
 ```
 MIDAS server (ODB, mserver, mlogger, mhttpd)
    ▲                        ▲
-danss_psu_fe               SlowControl FE (next)
+danss_psu_fe               danss_sc_fe
  PsuWorker                  PeriodicPoller / BoardRegistry
  PowerSupplyController      BoardClient
  OwonPSU ── TCP ── OWON     ModbusRTU ── RS-485 ── boards

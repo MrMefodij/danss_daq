@@ -16,3 +16,8 @@ target_link_libraries(test_psu_worker danss_core)
 # Пошаговая проверка блока питания на стенде (info | limits | cpu-on | cpu-off | hv | interlock)
 add_executable(psu_bench psu_bench.cpp)
 target_link_libraries(psu_bench danss_core)
+
+# Опрос плат: DataCollector без железа (ctest); с имитатором — см. комментарий в файле
+add_executable(test_poller test_poller.cpp)
+target_link_libraries(test_poller danss_core)
+add_test(NAME data_collector COMMAND test_poller)

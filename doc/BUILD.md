@@ -28,11 +28,12 @@ MIDAS подключается через `find_package(Midas)` из `$MIDASSYS`
 | Цель | Что это |
 |---|---|
 | `danss_core` | статическая библиотека: Modbus, BoardClient, PSU, PsuWorker, ConfigLoader, Logger |
-| `danss_frontend` | CLI: `--test-modbus`, `--standalone -c board_map.json` (проверка конфига) |
+| `danss_frontend` | CLI: `--test-modbus`, `--standalone -c board_map.json` (опрос плат без MIDAS, таблица в консоль) |
 | `modbus_scanner` | поиск плат на шине |
 | `modbus_tool` | одна плата: чтение, запись, scratchpad, адрес |
 | `danss_psu_fe` | MIDAS frontend блока питания (TMFE) |
-| `test_config_loader`, `test_psu_worker`, `test_owon_psu`, `psu_bench` | с `-DBUILD_TESTS=ON` |
+| `danss_sc_fe` | MIDAS frontend опроса плат (TMFE, equipment `SlowControl`) |
+| `test_config_loader`, `test_psu_worker`, `test_owon_psu`, `psu_bench`, `test_poller` | с `-DBUILD_TESTS=ON` |
 
 ## cvme1 (Linux Mint 19.1)
 

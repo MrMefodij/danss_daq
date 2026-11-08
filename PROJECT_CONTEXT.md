@@ -109,7 +109,7 @@ Fedora 33); разработка и проверка с одной платой 
        │ TCP 1175 (mserver)   │                        │
 ┌──────┴──────────┐  ┌────────┴───────────┐  ┌─────────┴─────────┐
 │ danss_psu_fe    │  │ SlowControl FE     │  │ WFD frontend      │
-│ (готов)         │  │ (следующий шаг)    │  │ (cvme1, позже)    │
+│ (готов)         │  │ danss_sc_fe        │  │ (cvme1, позже)    │
 │ PsuWorker       │  │ PeriodicPoller     │  │                   │
 │ PowerSupplyCtrl │  │ BoardRegistry      │  │                   │
 │ OwonPSU (SCPI)  │  │ BoardClient        │  │                   │
@@ -145,7 +145,7 @@ STOPPED ⇄ PHYSICS_RUN ⇄ CALIBRATION_RUN
 
 ```
 danss_daq/
-├── CMakeLists.txt                ✅ danss_core + danss_frontend, modbus_scanner, modbus_tool, danss_psu_fe
+├── CMakeLists.txt                ✅ danss_core + danss_frontend, modbus_scanner, modbus_tool, danss_psu_fe, danss_sc_fe
 ├── PROJECT_CONTEXT.md            ← этот файл
 ├── README.md, QUICKSTART.md, TODO.md, PROJECT_SUMMARY.md (история), CONDA_GCC_INSTALLATION.md
 ├── config/
@@ -169,10 +169,12 @@ danss_daq/
 │   ├── power/    owon_psu.cpp, power_controller.cpp, psu_worker.cpp        ✅ проверены на OWON
 │   │             power_equipment.cpp                                       ⚠️ заглушка, можно удалить
 │   ├── frontend/ psu_frontend.cxx (danss_psu_fe)                           ✅ проверен в облаке на MIDAS
-│   │             main.cpp (--test-modbus, --standalone)                    ✅
+│   │             sc_frontend.cxx (danss_sc_fe)                             ✅ проверен в облаке на MIDAS
+│   │             main.cpp (--test-modbus, --standalone = опрос без MIDAS)  ✅
 │   │             equipment.cpp                                             ⏳ заглушка
-│   ├── rs485/    rs485_manager.cpp, board_registry.cpp                     ⏳ пусто — следующий шаг
-│   ├── slowcontrol/ periodic_poller.cpp, data_collector.cpp                ⏳ пусто — следующий шаг
+│   ├── rs485/    board_registry.cpp                                        ✅ плата 17 + имитатор
+│   │             rs485_manager.cpp                                         ⚠️ заглушка (функция — в PeriodicPoller)
+│   ├── slowcontrol/ periodic_poller.cpp, data_collector.cpp                ✅ плата 17 + имитатор
 │   ├── eeprom/   eeprom_manager.cpp, eeprom_validator.cpp                  ⏳ пусто
 │   └── sync/     state_machine.cpp                                         ⏳ пусто
 └── tests/
@@ -181,8 +183,9 @@ danss_daq/
     ├── test_psu_worker.cpp       ✅ 26 проверок против mock
     ├── test_owon_psu.cpp         ✅ 20 проверок против mock (на приборе НЕ запускать: 55 В)
     ├── psu_bench.cpp             ✅ пошаговая проверка OWON на стенде
+    ├── test_poller.cpp           ✅ 27 проверок: DataCollector + опрос против имитатора, в ctest
     ├── mock_owon_server.py       ✅ эмулятор OWON (семантика выходов как у прибора)
-    └── fake_modbus_slave.py      ✅ имитатор платы по карте v2 (pty)
+    └── fake_modbus_slave.py      ✅ имитатор плат по карте v2 (pty; несколько адресов, --analog, --control: freeze/silent/reboot/trip)
 ```
 
 ---
@@ -210,14 +213,20 @@ danss_daq/
   канала, JRPC `emergency_shutdown` во время разгона, перезапуск без переключения выходов.
   **На cvme1 и с реальным OWON ещё не запускался.**
 
+- **Опрос плат** (`PeriodicPoller` → `BoardRegistry`, проверки `DataCollector`) — на плате 17
+  (две перезагрузки: offline → online, перезагрузки посчитаны, порт переоткрыт) и на имитаторе
+  нескольких плат (`test_poller`: stale, trip, reboot, silent, подключение аналоговой платы).
+- **danss_sc_fe** — на MIDAS c69c085 в облаке с имитатором: ODB `Readback`/`Boards`, банки
+  BDAT/SIPI/SIPT в истории (mlogger), алармы offline/stale/trip со сбросом, сообщение о
+  перезагрузке, `All healthy`, смена периода опроса на лету, `Poll now`, остановка по Ctrl-C.
+  **На cvme1 и со стендом ещё не запускался.**
+
 ### 🚧 Следующие шаги
 
-1. `BoardRegistry` + `PeriodicPoller` на `BoardClient` (состояния плат, свежесть,
-   перезагрузка платы, trip, сверка DAC только для подключённых аналоговых плат).
-2. SlowControl frontend (TMFE), банки, ODB, алармы; интерлок HV от состояния плат.
-3. `danss_psu_fe` на cvme1 с реальным OWON.
-4. Сканирование стенда на 38400 (2 ноября не ответила ни одна плата — сканировали на 19200).
-5. Суточная сверка scratchpad/ID с эталоном; state machine ранов; WFD frontend.
+1. `danss_psu_fe` и `danss_sc_fe` на cvme1 (OWON, стенд); сканирование стенда на 38400
+   (2 ноября не ответила ни одна плата — сканировали на 19200).
+2. Интерлок HV от `/Equipment/SlowControl/Readback/All healthy` (условия — решение группы).
+3. Суточная сверка scratchpad/ID с эталоном; state machine ранов; WFD frontend.
 
 ---
 
@@ -255,7 +264,8 @@ make -j4 && ctest
 ```
 
 Цели: `danss_core` (статическая), `danss_frontend`, `modbus_scanner`, `modbus_tool`,
-`danss_psu_fe`; с тестами — `test_config_loader`, `test_psu_worker`, `test_owon_psu`, `psu_bench`.
+`danss_psu_fe`, `danss_sc_fe`; с тестами — `test_config_loader`, `test_psu_worker`, `test_owon_psu`,
+`psu_bench`, `test_poller`.
 MIDAS подключается через `find_package(Midas)` (цель `midas::midas` несёт пути к
 mvodb/midasio и zlib, с которыми MIDAS собран).
 
@@ -284,7 +294,8 @@ modbus_tool /dev/ttyACM3 1 info                       # одна плата: в�
 modbus_tool /dev/ttyACM3 1 sp-dump backup_1.json      # резервная копия до любых записей
 psu_bench --config config/power_supply.json info      # блок питания: только чтение
 danss_psu_fe -- --config config/power_supply.json     # MIDAS frontend блока питания
-danss_frontend --standalone -c config/board_map_stand.json   # проверить конфиг плат
+danss_sc_fe -- --config config/board_map_stand.json   # MIDAS frontend плат
+danss_frontend --standalone -c config/board_map_bench.json  # опрос плат без MIDAS (таблица)
 ```
 
 Порт на macOS — `/dev/cu.usbserial-*`. Без железа: `tests/fake_modbus_slave.py` (печатает
@@ -336,7 +347,7 @@ pty-устройство), `tests/mock_owon_server.py <port>`.
 | Equipment | Программа | Event ID | Банк | Статус |
 |---|---|---|---|---|
 | `PowerSupply` | `danss_psu_fe` | 4 | `PSUD` (V, I, P, On × 3, float) | готов |
-| `SlowControl` | будет отдельной программой | 1–3 | `BDAT`, `STAT`, `ALRM` | следующий шаг |
+| `SlowControl` | `danss_sc_fe` | 1 | `BDAT` (8 × плата), `SIPI`, `SIPT` (12 × плата), float | готов |
 
 **ODB `/Equipment/PowerSupply`:**
 
@@ -351,6 +362,28 @@ pty-устройство), `tests/mock_owon_server.py <port>`.
   `Settings error`, `Output on[3]`, `Voltage V[3]`, `Current A[3]`.
 - Алармы: «PowerSupply link», «PowerSupply chN voltage», «PowerSupply settings».
 - JRPC `emergency_shutdown`. Остановка frontend выходы не трогает.
+
+**ODB `/Equipment/SlowControl`** (`danss_sc_fe -- --config config/board_map.json`):
+
+- Платы и ветки — только из JSON (ConfigLoader); порядок плат в банках = порядок в конфиге,
+  платы с `enabled: false` в банках есть (status 4, остальное −1).
+- `Settings/` — `Config file`; `Poll interval sec` (при первом запуске из JSON, дальше
+  действует значение в ODB, меняется на лету); `Poll now` (y → опрос сразу, сбрасывается);
+  `Names BDAT|SIPI|SIPT` — подписи для истории.
+- `Readback/` — `Online`, `Stale`, `Offline`, `Disabled`, `With problems`, `Tripped`,
+  `All healthy` (все включённые платы online и без проблем), `Last cycle`.
+- `Boards/<имя>/` — `Status`, `Branch`, `Address`, `Update counter`, `Analog boards`,
+  `Problems`, `Last error`, `Reboots`, `Failures`.
+- `Variables/BDAT` — на плату 8 чисел: status (0 unknown, 1 online, 2 stale, 3 offline,
+  4 disabled), update counter, CPU temp (raw), HV status (input 1), маска trip, маска
+  подключённых аналоговых плат, число расхождений DAC, число перезагрузок; −1 — нет данных.
+- `Variables/SIPI`, `SIPT` — на плату 12 токов / температур (raw; −1 — нет данных, нет
+  аналоговой платы или датчика). Пересчёт в единицы — после ответа Игоря.
+- Алармы (класс `Alarm`): «SC <плата> offline», «stale», «trip», «DAC»; сброс — когда
+  условие ушло. Каждое срабатывание дублируется сообщением MERROR: MIDAS пишет TALK класса
+  не чаще раза в `System message interval` (60 с). Перезагрузка платы — сообщение, не аларм.
+- Цикл: поток опроса по завершении цикла ставит флаг, periodic-обработчик (1 с) публикует
+  событие и ODB. JRPC `poll_now`. Опрос идёт и вне рана.
 
 ---
 
@@ -374,9 +407,9 @@ pty-устройство), `tests/mock_owon_server.py <port>`.
 
 ## 12. Приоритеты
 
-1. `BoardRegistry` + `PeriodicPoller` (проверка — плата 17 и `fake_modbus_slave.py`)
-2. SlowControl frontend (TMFE) + интерлок HV от состояния плат (условия — решение группы)
-3. `danss_psu_fe` на cvme1 с OWON; сканирование стенда на 38400
+1. `danss_psu_fe` и `danss_sc_fe` на cvme1; сканирование стенда на 38400
+2. Интерлок HV от `SlowControl/Readback/All healthy` (условия — решение группы)
+3. Ответы Игоря: признак аналоговой платы, единицы, раскладка каналов
 4. Суточная сверка; RunStateMachine; WFD frontend на cvme1
 
 Трекер задач: артефакт «План работ DANSS DAQ» в Claude.

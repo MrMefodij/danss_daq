@@ -3,13 +3,50 @@
 #include "common/logger.h"
 #include "common/config_loader.h"
 #include "modbus/modbus_rtu.h"
+#include "rs485/board_registry.h"
+#include "slowcontrol/periodic_poller.h"
+#include <atomic>
+#include <csignal>
+#include <cstdio>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <memory>
 #include <thread>
 #include <chrono>
 
 using namespace danss;
+
+namespace {
+std::atomic<bool> g_stop{false};
+void on_signal(int) { g_stop = true; }
+
+void print_boards(const BoardRegistry& reg, uint64_t cycle) {
+    auto sm = reg.summary();
+    std::printf("\n--- cycle %llu: %zu boards: %zu online, %zu stale, %zu offline, %zu disabled; problems: %zu, trip: %zu\n",
+                static_cast<unsigned long long>(cycle), sm.total, sm.online, sm.stale, sm.offline, sm.disabled,
+                sm.with_problems, sm.tripped);
+    std::printf("%-12s %3s %4s %-8s %7s %6s %5s %5s %4s %7s %6s  %s\n", "board", "br", "addr", "status", "update#",
+                "analog", "temps", "trip", "dac!", "reboots", "fails", "notes");
+    for (const auto& b : reg.snapshot()) {
+        const auto& h = b.health;
+        std::string analog;
+        for (size_t i = 0; i < constants::NUM_ANALOG_BOARDS; ++i) analog += h.analog_present[i] ? '1' : '-';
+        size_t temps = 0;
+        for (bool v : h.temperature_valid) temps += v;
+        std::string notes = b.status == BoardStatus::OFFLINE ? b.last_error : "";
+        for (const auto& p : h.problems) notes += (notes.empty() ? "" : "; ") + p;
+        const bool has = b.status == BoardStatus::ONLINE || b.status == BoardStatus::STALE;
+        std::printf("%-12s %3u %4u %-8s %7s %6s %5s %5s %4s %7llu %6llu  %s\n", b.config.name.c_str(), b.branch_id,
+                    b.config.address, to_string(b.status), has ? std::to_string(b.data.update_counter).c_str() : "-",
+                    has ? analog.c_str() : "-", has ? std::to_string(temps).c_str() : "-",
+                    has ? std::to_string(h.tripped_boards).c_str() : "-",
+                    has ? std::to_string(h.dac_mismatches.size()).c_str() : "-",
+                    static_cast<unsigned long long>(b.reboots), static_cast<unsigned long long>(b.failures), notes.c_str());
+    }
+    std::fflush(stdout);
+}
+} // namespace
 
 void print_banner() {
     std::cout << "\n";
@@ -29,14 +66,17 @@ void print_help() {
     std::cout << "  -c, --config <file>     Configuration file (default: config/board_map.json)\n";
     std::cout << "  -t, --test-modbus <dev> <baud> [addr]  Test Modbus communication\n";
     std::cout << "                          addr: board address to test (default: 1)\n";
-    std::cout << "  --standalone            Run without MIDAS (testing mode)\n";
+    std::cout << "  --standalone            Poll boards from the config without MIDAS, print a table each cycle\n";
+    std::cout << "    --interval <sec>      override poll_interval_sec (e.g. 5 for testing)\n";
+    std::cout << "    --device <path>       override the serial device of all branches (e.g. a test port)\n";
+    std::cout << "    --cycles <n>          stop after n cycles (default: run until Ctrl+C)\n";
     std::cout << "  -v, --verbose           Enable verbose logging\n";
     std::cout << "\n";
     std::cout << "Examples:\n";
     std::cout << "  danss_frontend -e DANSS\n";
     std::cout << "  danss_frontend --test-modbus /dev/ttyUSB0 38400\n";
     std::cout << "  danss_frontend --test-modbus /dev/ttyUSB0 38400 5\n";
-    std::cout << "  danss_frontend --standalone -v\n";
+    std::cout << "  danss_frontend --standalone -c config/board_map_stand.json --interval 5\n";
     std::cout << "\n";
     std::cout << "For scanning multiple addresses, use modbus_scanner:\n";
     std::cout << "  modbus_scanner --show-addresses /dev/ttyUSB0\n";
@@ -101,6 +141,9 @@ int main(int argc, char* argv[]) {
     bool standalone = false;
     bool test_modbus = false;
     bool verbose = false;
+    double interval_override = 0;
+    std::string device_override;
+    long max_cycles = 0;
     
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -121,6 +164,15 @@ int main(int argc, char* argv[]) {
         }
         else if (arg == "--standalone") {
             standalone = true;
+        }
+        else if (arg == "--interval" && i + 1 < argc) {
+            interval_override = std::stod(argv[++i]);
+        }
+        else if (arg == "--device" && i + 1 < argc) {
+            device_override = argv[++i];
+        }
+        else if (arg == "--cycles" && i + 1 < argc) {
+            max_cycles = std::stol(argv[++i]);
         }
         else if (arg == "-t" || arg == "--test-modbus") {
             test_modbus = true;
@@ -179,15 +231,35 @@ int main(int argc, char* argv[]) {
                      + ", boards:" + boards);
         }
 
-        // TODO: Initialize RS485Manager, start polling
-        
-        LOG_INFO("Press Ctrl+C to stop");
-        
-        // Keep running
-        while (true) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
-        
+        if (!device_override.empty())
+            for (auto& br : config.branches) br.device = device_override;
+
+        BoardRegistry registry(config);
+        PeriodicPoller poller(config, registry);
+        if (interval_override > 0) poller.set_poll_interval(interval_override);
+
+        // Таблица — после того как все ветки закончили очередной цикл
+        std::mutex print_mutex;
+        std::atomic<long> printed{0};
+        poller.set_cycle_callback([&](uint8_t) {
+            std::lock_guard<std::mutex> lock(print_mutex);
+            if (max_cycles > 0 && printed >= max_cycles) return;
+            uint64_t done = UINT64_MAX;
+            for (const auto& br : config.branches) done = std::min(done, poller.cycles(br.id));
+            if (static_cast<long>(done) > printed) {
+                printed = static_cast<long>(done);
+                print_boards(registry, done);
+                if (max_cycles > 0 && printed >= max_cycles) g_stop = true;
+            }
+        });
+
+        std::signal(SIGINT, on_signal);
+        std::signal(SIGTERM, on_signal);
+        poller.start();
+        LOG_INFO("Polling; press Ctrl+C to stop");
+        while (!g_stop) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        poller.stop();
+        LOG_INFO("Stopped");
         return 0;
     }
     

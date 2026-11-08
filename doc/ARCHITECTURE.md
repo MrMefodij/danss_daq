@@ -9,12 +9,14 @@ DANSS Slow Control is a multi-threaded, event-driven system for monitoring ~240 
 > The diagrams below are the original design (January 2025). What changed since then:
 
 - **Separate MIDAS programs on the TMFE API** (`tmfe.h`), not one `mfe.cxx` frontend:
-  `danss_psu_fe` (equipment `PowerSupply`, done) and a SlowControl frontend for the boards (next).
+  `danss_psu_fe` (equipment `PowerSupply`) and `danss_sc_fe` (equipment `SlowControl`, the boards).
   A failure in board polling does not affect HV control and vice versa.
 - **Board access layers:** `ModbusRTU` (framing by length, CRC, exceptions) →
   `BoardClient` (`include/modbus/board_client.h`: register map v2, CSR commands, scratchpad
   save/verify, DAC writes verified by readback, address assignment) →
-  `BoardRegistry` / `PeriodicPoller` (planned) → MIDAS equipment.
+  `PeriodicPoller` (thread per RS-485 branch, retries, port reopen) → `BoardRegistry` (state per
+  board: online / stale / offline / disabled; checks by `DataCollector`) → `danss_sc_fe`
+  (banks `BDAT`, `SIPI`, `SIPT`; ODB `Readback`, `Boards/<name>`; alarms; `All healthy`).
 - **Power supply layers:** `OwonPSU` (SCPI/TCP) → `PowerSupplyController` (thresholds with
   readback, interlock, HV ramps, emergency off) → `PsuWorker` (own thread: a 1-minute HV ramp
   never blocks the MIDAS loop; "off" and interlock drop abort a ramp) → `danss_psu_fe`

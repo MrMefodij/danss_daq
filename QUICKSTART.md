@@ -6,7 +6,7 @@
 
 ```bash
 git clone https://github.com/MrMefodij/danss_daq.git && cd danss_daq
-git checkout mkolupanova-tests
+git checkout amefodev-tests
 export MIDASSYS=/path/to/midas            # коммит c69c0853930b…
 mkdir -p build && cd build && cmake -DBUILD_TESTS=ON .. && make -j4 && ctest
 ```
@@ -53,6 +53,15 @@ export MIDAS_EXPTAB=$HOME/daq/online/exptab
 
 В mhttpd: `/Equipment/PowerSupply/Settings` — `Enable[2]` (ch3), `Interlock ready`,
 `Enable[0]` (HV ch1); состояние — в `Readback`. Подробно — `PROJECT_CONTEXT.md` §10.
+
+Платы:
+
+```bash
+./bin/danss_sc_fe -- --config ../config/board_map_stand.json
+```
+
+В mhttpd: `/Equipment/SlowControl/Readback` — сводка (`All healthy`), `Boards/<имя>` — по плате,
+`Settings/Poll interval sec` — период опроса (меняется на лету), `Settings/Poll now`.
 
 ## 6. Проверить конфиг плат
 

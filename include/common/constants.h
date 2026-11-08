@@ -223,6 +223,9 @@ constexpr uint16_t EVENT_ID_EEPROM_CHECK = 3;
 constexpr const char* BANK_NAME_BOARD_DATA = "BDAT";
 constexpr const char* BANK_NAME_STATISTICS = "STAT";
 constexpr const char* BANK_NAME_ALARMS = "ALRM";
+constexpr const char* BANK_NAME_SIPM_CURRENT = "SIPI";   // danss_sc_fe: токи SiPM, плата × 12 (raw)
+constexpr const char* BANK_NAME_SIPM_TEMP = "SIPT";      // danss_sc_fe: температуры SiPM, плата × 12 (raw, -1 = нет датчика)
+constexpr size_t BDAT_VALUES_PER_BOARD = 8;              // danss_sc_fe: состояние платы в банке BDAT
 
 // =============================================================================
 // Power Supply (OWON ODP6033 / SCPI over TCP)

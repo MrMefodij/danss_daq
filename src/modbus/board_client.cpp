@@ -267,19 +267,33 @@ bool BoardClient::assign_address(uint8_t new_address, std::string& report) {
         return fail("new address " + std::to_string(new_address) + " out of range 1-246");
     if (!bus_.write_single_register(address_, REG_DEVICE_ADDRESS, new_address))
         return fail("write address: " + bus_.get_last_error());
-    // Сохранить всё (стирание обязательно перед сохранением)
+    // Стереть (ещё на 247), затем сохранить. Новый адрес начинает действовать сразу после
+    // сохранения (подтверждено 07.11.2026), поэтому статус 105 читаем уже по новому адресу.
     uint16_t st = 0;
-    if (!csr_command(CSR_CMD_ERASE_SCRATCHPAD, st) || !csr_command(CSR_CMD_SAVE_TO_SCRATCHPAD, st)) return false;
+    if (!csr_command(CSR_CMD_ERASE_SCRATCHPAD, st)) return false;
+    if (!bus_.write_single_register(address_, REG_GLOBAL_CSR, CSR_CMD_SAVE_TO_SCRATCHPAD))
+        return fail("CSR command 105: " + bus_.get_last_error());
 
-    // Отвечает ли плата уже по новому адресу?
     BoardClient probe(bus_, new_address);
-    uint16_t c = 0;
-    if (probe.read_update_counter(c)) {
-        address_ = new_address;
-        report = "address " + std::to_string(new_address) + " assigned and active";
-    } else {
-        report = "address " + std::to_string(new_address)
-                 + " saved to scratchpad; board still answers at 247 — power-cycle it to apply";
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<uint16_t> v;
+    bool moved = false;
+    while (since(t0) < 5.0) {
+        if (probe.read_holding(REG_GLOBAL_CSR, 1, v)) {
+            moved = true;
+            break;
+        }
+        sleep_ms(100);
     }
+    if (!moved) {
+        report = "address " + std::to_string(new_address)
+                 + " written and save requested, but the board does not answer at the new address yet — "
+                   "check with scanner (power-cycle if it still answers at 247)";
+        return true;
+    }
+    address_ = new_address;
+    if (v[0] != CSR_STATUS_OK)
+        return fail("save after address change -> status " + std::to_string(v[0]));
+    report = "address " + std::to_string(new_address) + " assigned, saved and active";
     return true;
 }

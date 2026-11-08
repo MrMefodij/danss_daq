@@ -17,9 +17,9 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
 # Output directories
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/lib)
 
 # Find MIDAS
 if(NOT DEFINED ENV{MIDASSYS})
@@ -181,8 +181,20 @@ target_link_libraries(danss_psu_fe
     Threads::Threads
 )
 
+# SlowControl: опрос плат SiPM в MIDAS (TMFE), equipment "SlowControl"
+add_executable(danss_sc_fe
+    src/frontend/sc_frontend.cxx
+)
+
+target_link_libraries(danss_sc_fe
+    danss_core
+    midas::midas
+    ${Boost_LIBRARIES}
+    Threads::Threads
+)
+
 # Install targets
-install(TARGETS danss_frontend modbus_scanner modbus_tool danss_psu_fe
+install(TARGETS danss_frontend modbus_scanner modbus_tool danss_psu_fe danss_sc_fe
     RUNTIME DESTINATION bin
 )
 
