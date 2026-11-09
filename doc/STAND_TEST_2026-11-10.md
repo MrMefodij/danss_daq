@@ -46,6 +46,11 @@
 ## 5. MIDAS (если есть на этом компьютере)
 
 - [ ] В `config/board_map_stand.json` поправить `device` на порт этого компьютера.
+- [ ] Перед запуском `danss_sc_fe` остановить `modbus_tool` / `danss_frontend` на этом порту.
+      При первом запуске frontend **читает** уставки с плат в ODB и
+      `config/board_setpoints_stand.json`, на платы ничего не пишет. Уставки в
+      `Settings/Boards/<имя>/` (DAC, HV enable, …) и команды `Apply` / `Save to flash` на
+      стенде не трогать без договорённости с Игорем.
 - [ ] `danss_sc_fe -- --config config/board_map_stand.json`; в mhttpd: `SlowControl` online,
       `Boards/<имя>` — `Analog boards seen`, `Counters seen`, `Current uA`, `Temperature C`.
 - [ ] Отсутствующее на стенде исключить вручную (`Settings/Boards/<имя>/Exclude ...` + причина),

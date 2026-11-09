@@ -16,7 +16,14 @@ DANSS Slow Control is a multi-threaded, event-driven system for monitoring ~240 
   save/verify, DAC writes verified by readback, address assignment) →
   `PeriodicPoller` (thread per RS-485 branch, retries, port reopen) → `BoardRegistry` (state per
   board: online / stale / offline / disabled; checks by `DataCollector`) → `danss_sc_fe`
-  (banks `BDAT`, `SIPI`, `SIPT`; ODB `Readback`, `Boards/<name>`; alarms; `All healthy`).
+  (banks `BDAT`, `SIPI` µA, `SIPT` °C; ODB `Readback`, `Boards/<name>`; alarms; `All healthy`).
+- **Board control** (decision Р12): the thread that owns a branch port is the only one that
+  writes to its boards. `danss_sc_fe` turns operator changes in
+  `Settings/Boards/<name>/` (DAC, HV enable, gain/trip enable, cycle delay) and commands
+  (Apply, Read from board, Save to flash, Load from flash) into `BoardCommand`s queued to
+  `PeriodicPoller`; the branch thread executes them between polls, waits one board cycle and
+  re-polls the board. Desired setpoints and manual exclusions persist in JSON
+  (`setpoints_file`, `exclusions_file`); writes are refused during a run.
 - **Power supply layers:** `OwonPSU` (SCPI/TCP) → `PowerSupplyController` (thresholds with
   readback, interlock, HV ramps, emergency off) → `PsuWorker` (own thread: a 1-minute HV ramp
   never blocks the MIDAS loop; "off" and interlock drop abort a ramp) → `danss_psu_fe`

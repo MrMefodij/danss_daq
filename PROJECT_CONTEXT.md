@@ -100,7 +100,7 @@ Fedora 33); разработка и проверка с одной платой 
 
 ## 3. Архитектура
 
-Решения — в [doc/ARCHITECTURE_DECISIONS.md](doc/ARCHITECTURE_DECISIONS.md) (Р1–Р11).
+Решения — в [doc/ARCHITECTURE_DECISIONS.md](doc/ARCHITECTURE_DECISIONS.md) (Р1–Р12).
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -151,17 +151,23 @@ danss_daq/
 ├── config/
 │   ├── board_map.json            ✅ пример (2 ветки)
 │   ├── board_map_stand.json      ✅ стенд: /dev/ttyACM3, платы 1, 2, (3 выключена)
+│   ├── board_map_bench.json      ✅ стол: плата 17 на Mac (/dev/cu.usbserial-1140)
+│   ├── board_exclusions_*.json   ✅ ручные исключения (пишет danss_sc_fe)
+│   ├── board_setpoints_*.json    ✅ уставки плат (пишет danss_sc_fe; создаётся при первом запуске)
 │   ├── eeprom_reference.json     ✅ пример эталонов
 │   ├── power_supply.json         ✅ OWON: 192.168.10.81, ch3 CPU 6 В, ch1 HV 55 В
 │   └── generate_full_config.py   ✅ генератор на 240 плат
 ├── doc/
-│   ├── ARCHITECTURE_DECISIONS.md ✅ журнал решений Р1–Р11
-│   ├── MODBUS_MAP_v2.md          ✅ карта регистров, проверка на плате 17, вопросы Игорю
+│   ├── ARCHITECTURE_DECISIONS.md ✅ журнал решений Р1–Р12
+│   ├── STAND_TEST_2026-11-10.md  ✅ чек-лист проверки стенда с аналоговыми платами
+│   ├── MODBUS_MAP_v2.md          ✅ карта регистров, проверка на плате 17, ответы Игоря 09.11
 │   ├── MODBUS_TOOL.md            ✅ утилита одной платы, план проверки
 │   ├── ARCHITECTURE.md, BUILD.md, MODBUS_SCANNER.md, SCANNER_*.md
 ├── include/
 │   ├── common/   types.h, constants.h, logger.h, config_loader.h          ✅
 │   ├── modbus/   modbus_rtu.h, board_client.h                              ✅
+│   ├── rs485/    board_registry.h                                          ✅
+│   ├── slowcontrol/ periodic_poller.h, data_collector.h, exclusions_file.h, setpoints.h ✅
 │   └── power/    owon_psu.h, power_controller.h, psu_worker.h              ✅
 ├── src/
 │   ├── modbus/   modbus_rtu.cpp, modbus_crc.cpp, board_client.cpp          ✅ проверены на плате 17
@@ -174,7 +180,8 @@ danss_daq/
 │   │             equipment.cpp                                             ⏳ заглушка
 │   ├── rs485/    board_registry.cpp                                        ✅ плата 17 + имитатор
 │   │             rs485_manager.cpp                                         ⚠️ заглушка (функция — в PeriodicPoller)
-│   ├── slowcontrol/ periodic_poller.cpp, data_collector.cpp                ✅ плата 17 + имитатор
+│   ├── slowcontrol/ periodic_poller.cpp (опрос + очередь команд), data_collector.cpp ✅ плата 17 + имитатор
+│   │             exclusions_file.cpp, setpoints.cpp                        ✅ имитатор
 │   ├── eeprom/   eeprom_manager.cpp, eeprom_validator.cpp                  ⏳ пусто
 │   └── sync/     state_machine.cpp                                         ⏳ пусто
 └── tests/
@@ -183,14 +190,14 @@ danss_daq/
     ├── test_psu_worker.cpp       ✅ 26 проверок против mock
     ├── test_owon_psu.cpp         ✅ 20 проверок против mock (на приборе НЕ запускать: 55 В)
     ├── psu_bench.cpp             ✅ пошаговая проверка OWON на стенде
-    ├── test_poller.cpp           ✅ 27 проверок: DataCollector + опрос против имитатора, в ctest
+    ├── test_poller.cpp           ✅ 64 проверки: единицы, DataCollector, файлы исключений и уставок, опрос и команды против имитатора; в ctest — без имитатора
     ├── mock_owon_server.py       ✅ эмулятор OWON (семантика выходов как у прибора)
-    └── fake_modbus_slave.py      ✅ имитатор плат по карте v2 (pty; несколько адресов, --analog, --control: freeze/silent/reboot/trip)
+    └── fake_modbus_slave.py      ✅ имитатор плат по карте v2 (pty; несколько адресов, --analog, --counters, --control: freeze/silent/reboot/trip/analog/counters)
 ```
 
 ---
 
-## 5. Текущее состояние (07.11.2026)
+## 5. Текущее состояние (09.11.2026)
 
 ### ✅ Готово и проверено на железе
 
@@ -219,7 +226,12 @@ danss_daq/
 - **danss_sc_fe** — на MIDAS c69c085 в облаке с имитатором: ODB `Readback`/`Boards`, банки
   BDAT/SIPI/SIPT в истории (mlogger), алармы offline/stale/trip со сбросом, сообщение о
   перезагрузке, `All healthy`, смена периода опроса на лету, `Poll now`, остановка по Ctrl-C.
-  **На cvme1 и со стендом ещё не запускался.**
+  На плате 17 (Mac, 07.11): алармы offline/сброс и перезагрузка при выключении питания.
+  09.11: единицы (мкА, °C), признаки аналоговых плат и счётчиков, ручные исключения с файлом
+  (в т.ч. восстановление после очистки ODB), политика alarm/warning; **управление платами** —
+  правка уставок, отклонение недопустимых и во время рана, Save/Load flash, расхождение после
+  перезагрузки → аларм → Apply, Read from board. **На cvme1 и со стендом ещё не запускался;
+  запись уставок на плате 17 ещё не проверялась.**
 
 ### 🚧 Следующие шаги
 
@@ -347,7 +359,7 @@ pty-устройство), `tests/mock_owon_server.py <port>`.
 | Equipment | Программа | Event ID | Банк | Статус |
 |---|---|---|---|---|
 | `PowerSupply` | `danss_psu_fe` | 4 | `PSUD` (V, I, P, On × 3, float) | готов |
-| `SlowControl` | `danss_sc_fe` | 1 | `BDAT` (8 × плата), `SIPI`, `SIPT` (12 × плата), float | готов |
+| `SlowControl` | `danss_sc_fe` | 1 | `BDAT` (9 × плата), `SIPI` мкА, `SIPT` °C (12 × плата), float | готов |
 
 **ODB `/Equipment/PowerSupply`:**
 
@@ -419,16 +431,23 @@ pty-устройство), `tests/mock_owon_server.py <port>`.
 
 ## 11. Стратегия опроса плат
 
-**Каждые 5 минут, для каждой платы:** input 0–27 и holding 0–100 (по одной транзакции);
-свежесть — счётчик input 0 изменился (сравнивать на «изменился», он 16-битный); сброс
-счётчика — плата перезагружалась (scratchpad загружается сам, команда не нужна).
+**Каждый цикл** (`poll_interval_sec`, на стенде 300 с; меняется в ODB), для каждой платы:
+input 0–27 (состояние), holding 0–100 (уставки), input 150–245 (обратное чтение DAC),
+input 100–149 + 246 (ID термометров и CPU) — 5 транзакций; ограничений по частоте нет (Игорь).
+Свежесть — счётчик input 0 изменился (16 бит, сравнивать на «изменился»); «stale» — если стоит
+≥ 1 с + 3 × cycle delay. Сброс счётчика — перезагрузка: плата сама берёт уставки из flash,
+frontend на неё не пишет, а сверяет с ODB (расхождение — аларм «setpoints»).
 
-**Раз в сутки:** input 100–149 (ID), 150–245 (обратное чтение DAC), 250–761 (scratchpad,
-сумма 0xAA55), сверка с эталоном и уставками; восстановление — запись уставок → 103 → 105.
+**Команды платам** (уставки, flash) — в очереди ветки, выполняются её потоком сразу, между
+опросами; после команды — ожидание цикла платы и повторный опрос.
 
-**Каналы без аналоговой платы** (обратное чтение DAC = 0, температура 0x8001, ID = 0) —
-не сверять DAC и не поднимать алармы по температуре. Признак «плата подключена» — пока
-допущение (ненулевой ID термометра), ждём ответа Игоря.
+**Раз в сутки (план, s2-03):** scratchpad (input 250–761, сумма 0xAA55), сверка ID с
+эталоном (`eeprom_reference.json`).
+
+**Состав** (письмо Игоря 09.11.2026): аналоговая плата видна, если не все 32 обратных чтения её
+DAC = 0; счётчик — если ID термометра ≠ 0; температура 0x8001 при ID ≠ 0 — ошибка температуры.
+Всё, что не исключено оператором вручную, должно быть на месте; DAC и trip сверяются только у
+видимых и не исключённых аналоговых плат.
 
 **Ошибки:** таймаут → до 3 повторов → плата offline + аларм; CRC → повтор, >10 подряд —
 аларм «кабель/наводки»; ошибка порта → переоткрыть, иначе отключить ветку + критический аларм.

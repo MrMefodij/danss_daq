@@ -18,7 +18,9 @@ Full project context (status, decisions, hardware facts): [PROJECT_CONTEXT.md](P
 | `OwonPSU` + `PowerSupplyController` — thresholds, interlock, HV ramps, emergency off | tested on the OWON (no load) |
 | `danss_psu_fe` — MIDAS (TMFE) frontend for the power supply | tested on MIDAS with the OWON emulator |
 | Board polling (`BoardRegistry`, `PeriodicPoller`, `DataCollector`) | tested on board 17 and the multi-board emulator |
-| `danss_sc_fe` — MIDAS (TMFE) frontend for the boards (equipment `SlowControl`) | tested on MIDAS with the board emulator |
+| `danss_sc_fe` — MIDAS (TMFE) frontend for the boards (equipment `SlowControl`): currents in µA, temperatures in °C, analog board / counter presence, alarms | tested on board 17 and on MIDAS with the board emulator |
+| Manual exclusions of analog boards / counters (ODB ↔ `config/board_exclusions_*.json`) | tested on MIDAS with the board emulator |
+| Board control from MIDAS: DAC, HV enable, gain/trip, cycle delay; Apply / Read from board / Save to / Load from flash; locked during a run (ODB ↔ `config/board_setpoints_*.json`) | tested on MIDAS with the board emulator |
 | EEPROM/scratchpad daily check, run state machine, WFD frontend | planned |
 
 ## Board protocol

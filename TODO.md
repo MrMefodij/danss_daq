@@ -36,7 +36,7 @@
 
 ### Опрос плат
 - [x] `BoardRegistry`: платы из конфига, состояние (online / stale / offline / disabled), счётчики ошибок и перезагрузок, время последнего ответа
-- [x] `PeriodicPoller`: поток на ветку, статус + уставки + обратное чтение DAC, повторы, переоткрытие порта; проверен на плате 17 (две перезагрузки) и имитаторе (`tests/test_poller.cpp`, 27 проверок)
+- [x] `PeriodicPoller`: поток на ветку, статус + уставки + обратное чтение DAC, повторы, переоткрытие порта; проверен на плате 17 (две перезагрузки) и имитаторе (`tests/test_poller.cpp`, 64 проверки с имитатором)
 - [x] `DataCollector`: свежесть, перезагрузка (с учётом переполнения счётчика), trip и сверка DAC только для подключённых аналоговых плат
 - [x] `danss_sc_fe` (TMFE, equipment `SlowControl`): банки BDAT/SIPI/SIPT в историю, ODB `Readback` + `Boards/<имя>`, алармы offline/stale/trip/DAC, `All healthy`, период опроса из ODB, `Poll now`, JRPC `poll_now` — проверен на MIDAS c69c085 с имитатором
 - [ ] `danss_sc_fe` на cvme1 со стендом
@@ -50,7 +50,8 @@
 - [ ] Обработка ошибок: повторы, offline, CRC-серии, переоткрытие порта
 
 ### SlowControl frontend (TMFE)
-- [ ] Equipment `SlowControl`: банки `BDAT`/`STAT`/`ALRM`, ODB, история, алармы
+- [x] Equipment `SlowControl` (`danss_sc_fe`): банки `BDAT`/`SIPI`/`SIPT`, ODB, история, алармы — см. выше
+- [ ] Кнопки управления и карта плат на странице mhttpd (s6-05)
 - [ ] Интерлок HV от состояния плат (условия — решение группы до подключения SiPM)
 
 ### Суточная сверка
