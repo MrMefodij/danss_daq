@@ -55,7 +55,10 @@ BoardState BoardRegistry::update(uint8_t branch_id, uint8_t address, const PollR
     } else {
         const bool had = s.data.data_valid && s.last_ok_ms > 0;
         const double elapsed = had ? static_cast<double>(r.time_ms - s.last_ok_ms) : 0.0;
-        s.health = collector::evaluate(r.data, had ? &s.data : nullptr, elapsed, s.excluded);
+        const bool changed = !had || r.data.update_counter != s.data.update_counter;
+        if (changed) s.last_change_ms = r.time_ms;
+        const double unchanged = static_cast<double>(r.time_ms - s.last_change_ms);
+        s.health = collector::evaluate(r.data, had ? &s.data : nullptr, elapsed, s.excluded, unchanged);
         if (s.health.rebooted) s.reboots++;
         s.data = r.data;
         s.data.board_name = s.config.name;

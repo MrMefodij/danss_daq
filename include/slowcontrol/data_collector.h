@@ -29,6 +29,11 @@ constexpr uint16_t TEMPERATURE_NO_SENSOR = constants::SIPM_TEMP_NO_ACCESS;
 /// Плата 17 при задержке 0 — 134 мс; берём с большим запасом.
 constexpr double MIN_BOARD_CYCLE_MS = 50.0;
 
+/// «Данные не обновляются» — только если счётчик стоит дольше этого (плюс 3 задержки цикла,
+/// holding 99, считая её в мс). Два опроса подряд (например, после команды) могут попасть
+/// в один цикл платы — это не остановка.
+constexpr double STALE_MIN_MS = 1000.0;
+
 constexpr size_t DAC_CHANNELS_PER_ANALOG_BOARD = constants::NUM_DAC_CHANNELS / constants::NUM_ANALOG_BOARDS;  // 32
 
 bool temperature_valid(uint16_t raw);
@@ -76,8 +81,9 @@ struct BoardHealth {
 /// @param prev  предыдущий успешный снимок или nullptr (первый опрос)
 /// @param elapsed_ms время между снимками
 /// @param excluded что оператор исключил из проверки
+/// @param unchanged_ms сколько счётчик input 0 уже не меняется (если не менялся с prev)
 BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed_ms,
-                     const Exclusions& excluded = {});
+                     const Exclusions& excluded = {}, double unchanged_ms = 1e12);
 
 /// "0, 2, 5-7" — номера установленных битов (для сообщений)
 std::string mask_to_list(uint16_t mask, size_t bits);

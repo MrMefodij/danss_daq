@@ -66,6 +66,11 @@ export MIDAS_EXPTAB=$HOME/daq/online/exptab
 `Exclusion reason`; сохраняются в `config/board_exclusions_*.json`. Для платы 17 на столе всё
 уже исключено (`config/board_exclusions_bench.json`).
 
+Уставки платы — там же: `DAC`, `HV enable`, `Gain trip enable`, `Cycle delay`. Изменение сразу
+пишется на плату (не во время рана). Команды `Apply`, `Read from board`, `Save to flash`,
+`Load from flash` — поставить `y`. Уставки сохраняются в `config/board_setpoints_*.json`;
+при первом запуске берутся с платы.
+
 ## 6. Проверить конфиг плат
 
 ```bash

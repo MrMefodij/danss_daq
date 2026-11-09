@@ -15,6 +15,19 @@
 //   Settings/Boards/<имя>/      — ручные исключения: Exclude analog board[3], Exclude counter[12],
 //                                 Exclusion reason. При старте берутся из файла исключений (файл
 //                                 главнее ODB), каждое изменение пишется в журнал и сразу в файл.
+//   Settings/Boards/<имя>/      — уставки платы (s2-07, Р12): DAC[96], HV enable, Gain trip enable,
+//                                 Cycle delay — желаемые значения. Изменение оператором проверяется
+//                                 и сразу пишется на плату (только изменённые группы), в журнал и
+//                                 в файл уставок (system.setpoints_file). Команды (y, сбрасываются):
+//                                 Apply — записать все уставки ODB на плату; Read from board — взять
+//                                 уставки с платы в ODB; Save to flash — 103 -> 105 (только если
+//                                 плата совпадает с ODB); Load from flash — 101.
+//                                 Во время рана изменения запрещены (system.setpoints_during_run).
+//                                 Уставок платы нет в файле — при первом ответе берутся с платы
+//                                 (на плату при этом ничего не пишется).
+//                                 Плата разошлась с ODB сама (перезагрузка, modbus_tool) — аларм
+//                                 «SC <плата> setpoints»; оператор решает: Apply или Read from board.
+//   Boards/<имя>/Setpoints, Last command — уставки ODB против платы; результат последней команды.
 //   Readback/                   — сводка: Online, Stale, Offline, Disabled, With problems,
 //                                 With missing, Tripped, All healthy, Missing policy, Last cycle
 //   Boards/<имя>/               — по плате: Status, Branch, Address, Update counter, Analog boards seen,
@@ -45,6 +58,7 @@
 #include "rs485/board_registry.h"
 #include "slowcontrol/exclusions_file.h"
 #include "slowcontrol/periodic_poller.h"
+#include "slowcontrol/setpoints.h"
 
 #include <atomic>
 #include <cmath>
@@ -53,6 +67,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -171,6 +186,8 @@ public:
 
         TMFeResult r = InitExclusions();
         if (r.error_flag) return r;
+        r = InitSetpoints();
+        if (r.error_flag) return r;
 
         fPoller = std::make_unique<PeriodicPoller>(fConfig, *fRegistry);
         fPoller->set_poll_interval(interval);
@@ -190,7 +207,9 @@ public:
         if (!fPoller) return;
         CheckSettings();
         CheckExclusions();
-        if (fCycleDone.exchange(false)) Publish();
+        const bool done = ProcessDone();
+        CheckSetpoints();
+        if (fCycleDone.exchange(false) || done) Publish();
     }
 
     TMFeResult HandleRpc(const char* cmd, const char* /*args*/, std::string& response) override {
@@ -214,7 +233,26 @@ private:
 
     // Ручные исключения: имя платы -> текущее значение и каталог ODB с его настройками
     ExclusionMap fExcl;
-    std::map<std::string, MVOdb*> fOdbExcl;
+    std::map<std::string, MVOdb*> fOdbExcl;  // Settings/Boards/<имя> — исключения, уставки, команды
+
+    // Уставки: имя платы -> желаемое (ODB), состояние команды
+    struct SpState {
+        bool known = false;     ///< желаемые уставки есть (из файла, с платы или от оператора)
+        BoardSetpoints want;
+        std::string changed, source;
+        bool busy = false;      ///< команда в очереди / выполняется
+        std::string last_command;
+        bool alarm = false;
+    };
+    std::map<std::string, SpState> fSp;
+    struct Done {
+        std::string name;
+        BoardCommand::Type type;
+        bool ok;
+        std::string report;
+    };
+    std::mutex fDoneMutex;
+    std::vector<Done> fDone;
 
     struct AlarmState {
         bool offline = false, stale = false, trip = false, dac = false, missing = false;
@@ -326,6 +364,237 @@ private:
         if (masks_changed) fPoller->poll_now();  // проверка с новыми исключениями — сразу
     }
 
+    // ---- уставки плат (s2-07) ---------------------------------------------------
+
+    TMFeResult InitSetpoints() {
+        bool exists = false;
+        SetpointsMap file;
+        if (!fConfig.setpoints_file.empty()) {
+            try {
+                file = load_setpoints(fConfig.setpoints_file, exists);
+            } catch (const ConfigError& e) {
+                EqSetStatus("Invalid setpoints file", "redLight");
+                return TMFeErrorMessage(std::string("Invalid setpoints file: ") + e.what());
+            }
+        } else {
+            fMfe->Msg(MINFO, "InitSetpoints", "SlowControl: system.setpoints_file is not set in %s — "
+                      "board setpoints are not saved between runs of MIDAS", fConfigFile.c_str());
+        }
+        fOdbEqSettings->WS("Setpoints file", fConfig.setpoints_file.c_str(), 256);
+        fOdbEqSettings->WB("Setpoints during run", fConfig.setpoints_during_run);
+        for (const auto& [name, o] : fOdbExcl) {
+            SpState& sp = fSp[name];
+            for (const char* cmd : {"Apply", "Read from board", "Save to flash", "Load from flash"}) o->WB(cmd, false);
+            auto it = file.find(name);
+            if (it != file.end()) {
+                sp.known = true;
+                sp.want = it->second.sp;
+                sp.changed = it->second.changed;
+                sp.source = it->second.source;
+                WriteOdbSetpoints(o, sp.want);
+            } else {
+                // Уставок нет — возьмём с платы при первом ответе; старые значения в ODB не показываем
+                for (const char* k : {"DAC", "HV enable", "Gain trip enable", "Cycle delay"}) o->Delete(k);
+            }
+        }
+        for (const auto& [name, e] : file)
+            if (!fSp.count(name))
+                fMfe->Msg(MERROR, "InitSetpoints", "SlowControl: %s: board \"%s\" is not in %s — ignored",
+                          fConfig.setpoints_file.c_str(), name.c_str(), fConfigFile.c_str());
+        return TMFeOk();
+    }
+
+    void WriteOdbSetpoints(MVOdb* o, const BoardSetpoints& sp) {
+        o->WIA("DAC", std::vector<int>(sp.dac.begin(), sp.dac.end()));
+        o->WI("HV enable", sp.hv_enable);
+        o->WI("Gain trip enable", sp.gain_trip_enable);
+        o->WI("Cycle delay", sp.cycle_delay);
+    }
+
+    /// false + err — значения в ODB не уставки (не тот размер, вне 0…65535)
+    bool ReadOdbSetpoints(MVOdb* o, BoardSetpoints& sp, std::string& err) {
+        std::vector<int> dac;
+        int hv = 0, gt = 0, delay = 0;
+        o->RIA("DAC", &dac);
+        o->RI("HV enable", &hv);
+        o->RI("Gain trip enable", &gt);
+        o->RI("Cycle delay", &delay);
+        if (dac.size() != NUM_DAC_CHANNELS) {
+            err = "DAC must have " + std::to_string(NUM_DAC_CHANNELS) + " values, got " + std::to_string(dac.size());
+            return false;
+        }
+        for (size_t i = 0; i < dac.size(); ++i) {
+            if (dac[i] < 0 || dac[i] > 0xFFFF) {
+                err = "DAC[" + std::to_string(i) + "] = " + std::to_string(dac[i]) + " is outside 0..65535";
+                return false;
+            }
+            sp.dac[i] = static_cast<uint16_t>(dac[i]);
+        }
+        for (auto [v, name] : {std::pair<int, const char*>{hv, "HV enable"}, {gt, "Gain trip enable"}, {delay, "Cycle delay"}})
+            if (v < 0 || v > 0xFFFF) {
+                err = std::string(name) + " = " + std::to_string(v) + " is outside 0..65535";
+                return false;
+            }
+        sp.hv_enable = static_cast<uint16_t>(hv);
+        sp.gain_trip_enable = static_cast<uint16_t>(gt);
+        sp.cycle_delay = static_cast<uint16_t>(delay);
+        return true;
+    }
+
+    void SaveSetpoints() {
+        if (fConfig.setpoints_file.empty()) return;
+        SetpointsMap m;
+        for (const auto& [name, sp] : fSp)
+            if (sp.known) m[name] = {sp.want, sp.changed, sp.source};
+        try {
+            save_setpoints(fConfig.setpoints_file, m);
+        } catch (const std::exception& e) {
+            fMfe->Msg(MERROR, "SaveSetpoints", "SlowControl: cannot save setpoints: %s", e.what());
+            fMfe->TriggerAlarm("SC setpoints file", (std::string("SlowControl: cannot save setpoints: ") + e.what()).c_str(),
+                               "Alarm");
+            return;
+        }
+        fMfe->ResetAlarm("SC setpoints file");
+    }
+
+    static bool Live(const BoardState& b) { return b.status == BoardStatus::ONLINE || b.status == BoardStatus::STALE; }
+
+    /// Можно ли сейчас что-то делать с уставками платы; нет — сообщение и false
+    bool Allowed(const std::string& name, const char* what, bool need_known = true) {
+        const SpState& sp = fSp[name];
+        const char* why = nullptr;
+        if (need_known && !sp.known) why = "setpoints are not known yet (board has not answered)";
+        else if (sp.busy) why = "previous command is still running";
+        else if (fMfe->fStateRunning && !fConfig.setpoints_during_run) why = "a run is in progress (system.setpoints_during_run = false)";
+        if (!why) return true;
+        fMfe->Msg(MERROR, "Setpoints", "SlowControl: %s: %s refused: %s", name.c_str(), what, why);
+        return false;
+    }
+
+    void Submit(const std::string& name, BoardCommand::Type type, const BoardSetpoints& sp, uint8_t fields) {
+        auto b = fRegistry->find(name);
+        if (!b) return;
+        BoardCommand c;
+        c.type = type;
+        c.address = b->config.address;
+        c.setpoints = sp;
+        c.fields = fields;
+        c.done = [this, name, type](bool ok, const std::string& report) {
+            std::lock_guard<std::mutex> lock(fDoneMutex);
+            fDone.push_back({name, type, ok, report});
+        };
+        fSp[name].busy = true;
+        if (!fPoller->submit(b->branch_id, std::move(c))) {
+            fSp[name].busy = false;
+            fMfe->Msg(MERROR, "Setpoints", "SlowControl: %s: cannot queue %s", name.c_str(), to_string(type));
+        }
+    }
+
+    /// Результаты команд из потоков веток. true — что-то пришло (обновить ODB)
+    bool ProcessDone() {
+        std::vector<Done> done;
+        {
+            std::lock_guard<std::mutex> lock(fDoneMutex);
+            done.swap(fDone);
+        }
+        for (const auto& d : done) {
+            SpState& sp = fSp[d.name];
+            sp.busy = false;
+            sp.last_command = now_string() + " " + to_string(d.type) + ": " + (d.ok ? "ok — " : "FAILED — ") + d.report;
+            if (d.ok)
+                fMfe->Msg(MINFO, "Setpoints", "SlowControl: %s: %s: %s", d.name.c_str(), to_string(d.type), d.report.c_str());
+            else
+                fMfe->Msg(MERROR, "Setpoints", "SlowControl: %s: %s FAILED: %s", d.name.c_str(), to_string(d.type),
+                          d.report.c_str());
+        }
+        return !done.empty();
+    }
+
+    /// Уставки ODB = уставки платы (последний опрос)
+    void TakeFromBoard(const std::string& name, const BoardState& b, const char* source) {
+        SpState& sp = fSp[name];
+        sp.want = BoardSetpoints::from_board(b.data);
+        sp.known = true;
+        sp.changed = now_string();
+        sp.source = source;
+        WriteOdbSetpoints(fOdbExcl[name], sp.want);
+        SaveSetpoints();
+    }
+
+    /// Команды и правки оператора в Settings/Boards/<имя>
+    void CheckSetpoints() {
+        const bool running = fMfe->fStateRunning;
+        for (const auto& [name, o] : fOdbExcl) {
+            SpState& sp = fSp[name];
+            auto take = [&](const char* key) {
+                bool v = false;
+                o->RB(key, &v, true);
+                if (v) o->WB(key, false);
+                return v;
+            };
+            if (take("Read from board") && Allowed(name, "Read from board", false)) {
+                auto b = fRegistry->find(name);
+                if (!b || !Live(*b)) {
+                    fMfe->Msg(MERROR, "Setpoints", "SlowControl: %s: Read from board refused: board is not online", name.c_str());
+                } else {
+                    const std::string diff = sp.known ? describe_diff(sp.want, BoardSetpoints::from_board(b->data)) : "";
+                    TakeFromBoard(name, *b, "read from board");
+                    fMfe->Msg(MINFO, "Setpoints", "SlowControl: %s: operator took setpoints from the board%s%s", name.c_str(),
+                              diff.empty() ? " (no changes)" : ": ", diff.c_str());
+                }
+            }
+            if (take("Apply") && Allowed(name, "Apply")) {
+                fMfe->Msg(MINFO, "Setpoints", "SlowControl: %s: operator: apply all setpoints from ODB", name.c_str());
+                Submit(name, BoardCommand::Type::WRITE_SETPOINTS, sp.want, BoardSetpoints::ALL);
+            }
+            if (take("Save to flash") && Allowed(name, "Save to flash")) {
+                auto b = fRegistry->find(name);
+                const BoardSetpoints on_board = b ? BoardSetpoints::from_board(b->data) : BoardSetpoints{};
+                if (!b || !Live(*b)) {
+                    fMfe->Msg(MERROR, "Setpoints", "SlowControl: %s: Save to flash refused: board is not online", name.c_str());
+                } else if ((on_board.differs(sp.want) & ~BoardSetpoints::GAIN_TRIP) != 0) {
+                    // holding 97 в scratchpad не сохраняется — его не сравниваем
+                    fMfe->Msg(MERROR, "Setpoints", "SlowControl: %s: Save to flash refused: board differs from ODB (%s) — "
+                              "Apply or Read from board first", name.c_str(), describe_diff(sp.want, on_board).c_str());
+                } else {
+                    fMfe->Msg(MINFO, "Setpoints", "SlowControl: %s: operator: save to flash", name.c_str());
+                    Submit(name, BoardCommand::Type::SAVE_TO_FLASH, sp.want, 0);
+                }
+            }
+            if (take("Load from flash") && Allowed(name, "Load from flash", false)) {
+                fMfe->Msg(MINFO, "Setpoints", "SlowControl: %s: operator: load from flash", name.c_str());
+                Submit(name, BoardCommand::Type::LOAD_FROM_FLASH, sp.want, 0);
+            }
+
+            // Правка уставок оператором
+            if (!sp.known || sp.busy) continue;
+            BoardSetpoints odb;
+            std::string err;
+            if (!ReadOdbSetpoints(o, odb, err)) {
+                fMfe->Msg(MERROR, "Setpoints", "SlowControl: %s: setpoints rejected: %s — ODB restored", name.c_str(), err.c_str());
+                WriteOdbSetpoints(o, sp.want);
+                continue;
+            }
+            const uint8_t fields = odb.differs(sp.want);
+            if (!fields) continue;
+            const std::string bad = validate(odb);
+            if (!bad.empty() || (running && !fConfig.setpoints_during_run)) {
+                fMfe->Msg(MERROR, "Setpoints", "SlowControl: %s: setpoints change rejected (%s): %s — ODB restored", name.c_str(),
+                          describe_diff(sp.want, odb).c_str(),
+                          bad.empty() ? "a run is in progress (system.setpoints_during_run = false)" : bad.c_str());
+                WriteOdbSetpoints(o, sp.want);
+                continue;
+            }
+            fMfe->Msg(MINFO, "Setpoints", "SlowControl: %s: operator changed setpoints: %s", name.c_str(),
+                      describe_diff(sp.want, odb, NUM_DAC_CHANNELS).c_str());
+            sp.want = odb;
+            sp.changed = now_string();
+            sp.source = "operator";
+            SaveSetpoints();
+            Submit(name, BoardCommand::Type::WRITE_SETPOINTS, odb, fields);
+        }
+    }
+
     // ---- настройки опроса ------------------------------------------------------
 
     void WriteNames() {
@@ -421,6 +690,7 @@ private:
         fOdbReadback->WS("Missing policy", fConfig.missing_is_alarm ? "alarm" : "warning", 16);
         fOdbReadback->WS("Last cycle", now_string().c_str(), 32);
 
+        size_t differ = 0;
         for (const auto& b : boards) {
             const bool has = live(b);
             MVOdb* o = fOdbBoards->Chdir(odb_key(b.config.name).c_str(), true);
@@ -443,8 +713,30 @@ private:
             }
             o->WDA("Current uA", cur);
             o->WDA("Temperature C", temp);
+
+            // Уставки: ODB против платы
+            SpState& sp = fSp[b.config.name];
+            if (has && !sp.known) {
+                TakeFromBoard(b.config.name, b, "read from board");
+                fMfe->Msg(MINFO, "Setpoints", "SlowControl: %s: setpoints taken from the board (not in the setpoints file)",
+                          b.config.name.c_str());
+            }
+            std::string sp_text = "unknown";
+            bool sp_differs = false;
+            if (sp.known) {
+                const std::string diff = has ? describe_diff(sp.want, BoardSetpoints::from_board(b.data)) : "";
+                sp_differs = has && !sp.busy && !diff.empty();
+                sp_text = sp.busy ? "command in progress" : !has ? "board not online" : diff.empty() ? "in sync"
+                                                                                                    : "ODB -> board: " + diff;
+            }
+            if (sp_differs) ++differ;
+            o->WS("Setpoints", sp_text.c_str(), 256);
+            o->WS("Last command", sp.last_command.c_str(), 256);
             delete o;
             Alarms(b);
+            SetAlarm(sp.alarm, sp_differs, "SC " + b.config.name + " setpoints",
+                     "SC " + b.config.name + ": board setpoints differ from ODB (" + sp_text
+                         + ") — Apply or Read from board");
         }
 
         // ---- статус equipment на странице mhttpd
@@ -456,8 +748,9 @@ private:
         if (sm.stale) status += ", " + std::to_string(sm.stale) + " stale";
         if (sm.tripped) status += ", " + std::to_string(sm.tripped) + " trip";
         if (sm.with_missing) status += ", " + std::to_string(sm.with_missing) + " incomplete";
+        if (differ) status += ", " + std::to_string(differ) + " setpoints differ";
         const bool red = sm.offline || sm.tripped || (sm.with_missing && fConfig.missing_is_alarm);
-        const char* color = red ? "redLight" : (sm.stale || sm.with_problems) ? "yellowLight" : "greenLight";
+        const char* color = red ? "redLight" : (sm.stale || sm.with_problems || differ) ? "yellowLight" : "greenLight";
         EqSetStatus(status.c_str(), color);
     }
 

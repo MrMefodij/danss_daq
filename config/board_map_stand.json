@@ -8,7 +8,9 @@
     "max_retries": 3,
     "retry_delay_ms": 100,
     "exclusions_file": "board_exclusions_stand.json",
-    "missing_component": "alarm"
+    "missing_component": "alarm",
+    "setpoints_file": "board_setpoints_stand.json",
+    "setpoints_during_run": false
   },
   "branches": [
     {

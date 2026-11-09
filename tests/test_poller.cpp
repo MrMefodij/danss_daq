@@ -13,7 +13,9 @@
 #include "slowcontrol/exclusions_file.h"
 #include "common/config_loader.h"
 
+#include <atomic>
 #include <cmath>
+#include <mutex>
 #include <unistd.h>
 
 #include <chrono>
@@ -117,6 +119,41 @@ void test_collector() {
     t.hv_status = static_cast<uint16_t>(0b111 << 12);
     h = collector::evaluate(t, nullptr, 0, {0b101, 0});
     check(h.tripped_boards == 0b010, "trip: плата 0 исключена, 2 не подключена — остаётся 0x2");
+}
+
+void test_setpoints() {
+    std::printf("\n=== 1b. Уставки и их файл ===\n");
+    BoardSetpoints a, b;
+    for (size_t i = 0; i < a.dac.size(); ++i) a.dac[i] = b.dac[i] = static_cast<uint16_t>(100 + i);
+    check(a == b && a.differs(b) == 0, "одинаковые уставки");
+    b.dac[3] = 9;
+    b.hv_enable = 0x00F;
+    check(a.differs(b) == (BoardSetpoints::DAC | BoardSetpoints::HV_ENABLE), "отличия: DAC и HV enable");
+    check(describe_diff(a, b) == "DAC 3: 103 -> 9; HV enable 0x000 -> 0x00F", "описание: " + describe_diff(a, b));
+    b.hv_enable = 0x1000;
+    check(!validate(b).empty(), "HV enable 0x1000 недопустим: " + validate(b));
+    b.hv_enable = 0;
+    b.gain_trip_enable = 0x0808;
+    check(!validate(b).empty(), "gain/trip 0x0808 недопустим");
+    b.gain_trip_enable = 0x0707;
+    check(validate(b).empty(), "gain/trip 0x0707 допустим");
+
+    SetpointsMap m;
+    m["B1"] = {b, "2026-11-09 12:00:00", "operator"};
+    auto back = parse_setpoints(setpoints_to_json(m), "test");
+    check(back.size() == 1 && back["B1"].sp == b && back["B1"].source == "operator", "запись/чтение файла уставок");
+    bool threw = false;
+    try {
+        parse_setpoints(R"({"boards":{"X":{"dac":[1,2,3]}}})", "test");
+    } catch (const ConfigError&) { threw = true; }
+    check(threw, "DAC не из 96 чисел — ошибка файла");
+    threw = false;
+    try {
+        std::string j = setpoints_to_json(m);
+        j.replace(j.find("\"hv_enable\": 0"), 15, "\"hv_enable\": 65535");
+        parse_setpoints(j, "test");
+    } catch (const ConfigError&) { threw = true; }
+    check(threw, "недопустимый HV enable в файле — ошибка");
 }
 
 void test_exclusions_file() {
@@ -238,6 +275,49 @@ void test_poller(const std::string& device, const std::string& control) {
     ctl(control, "2 talk");
     check(wait_for([&] { return status(reg, 2) == BoardStatus::ONLINE; }, 6), "плата 2 снова отвечает -> online");
 
+    // ---- команды платам (s2-07)
+    struct Res { std::atomic<int> n{0}; bool ok = false; std::string report; std::mutex m; } res;
+    auto cmd = [&](BoardCommand::Type t, uint8_t addr, const BoardSetpoints& sp, uint8_t fields) {
+        res.n = 0;
+        BoardCommand c;
+        c.type = t;
+        c.address = addr;
+        c.setpoints = sp;
+        c.fields = fields;
+        c.done = [&](bool ok, const std::string& rep) {
+            std::lock_guard<std::mutex> l(res.m);
+            res.ok = ok;
+            res.report = rep;
+            res.n = 1;
+        };
+        const bool queued = poller.submit(0, std::move(c));
+        const bool finished = queued && wait_for([&] { return res.n.load() == 1; }, 10);
+        std::lock_guard<std::mutex> l(res.m);
+        return finished && res.ok;
+    };
+    auto checkr = [&](bool ok, const std::string& what) { check(ok, what + " — " + res.report); };
+    poller.set_poll_interval(30);  // команды не должны ждать планового цикла
+    poller.poll_now();
+    BoardSetpoints sp = BoardSetpoints::from_board(reg.get(0, 1)->data);
+    sp.dac[5] = 777;
+    sp.hv_enable = 0x00F;
+    auto tc = clk::now();
+    checkr(cmd(BoardCommand::Type::WRITE_SETPOINTS, 1, sp, BoardSetpoints::DAC | BoardSetpoints::HV_ENABLE),
+          "запись DAC + HV enable на плату 1");
+    check(std::chrono::duration<double>(clk::now() - tc).count() < 3.0, "команда выполнена сразу, не по расписанию опроса");
+    auto b1 = reg.get(0, 1);
+    check(b1->data.dac_settings[5] == 777 && b1->data.hv_enable == 0x00F, "реестр сразу видит новые уставки");
+    check(wait_for([&] { auto x = reg.get(0, 1); return x->data.dac_readback[5] == 777 || (poller.poll_now(), false); }, 5),
+          "обратное чтение DAC 5 = 777 (аналоговая плата 0 подключена)");
+    checkr(cmd(BoardCommand::Type::SAVE_TO_FLASH, 1, sp, 0), "сохранение во flash");
+    sp.dac[5] = 100;
+    check(cmd(BoardCommand::Type::WRITE_SETPOINTS, 1, sp, BoardSetpoints::DAC), "DAC 5 -> 100");
+    check(cmd(BoardCommand::Type::LOAD_FROM_FLASH, 1, sp, 0) && reg.get(0, 1)->data.dac_settings[5] == 777,
+          "загрузка из flash вернула DAC 5 = 777");
+    checkr(!cmd(BoardCommand::Type::WRITE_SETPOINTS, 4, sp, BoardSetpoints::ALL), "плата 4 не отвечает — отказ");
+    checkr(!cmd(BoardCommand::Type::WRITE_SETPOINTS, 3, sp, BoardSetpoints::ALL), "плата 3 отключена в конфиге — отказ");
+    checkr(!cmd(BoardCommand::Type::WRITE_SETPOINTS, 9, sp, BoardSetpoints::ALL), "платы 9 нет на ветке — отказ");
+
     auto t0 = clk::now();
     poller.stop();
     check(std::chrono::duration<double>(clk::now() - t0).count() < 2.0, "stop() быстрый");
@@ -253,6 +333,7 @@ int main(int argc, char** argv) {
     test_units();
     test_collector();
     test_exclusions_file();
+    test_setpoints();
     if (argc >= 3) test_poller(argv[1], argv[2]);
     else std::printf("\n(опрос не проверялся: нужны аргументы <device> <control-file>)\n");
     std::printf("\n=== Итог: %d PASS, %d FAIL ===\n", g_pass, g_fail);

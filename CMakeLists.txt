@@ -92,6 +92,7 @@ set(SLOWCONTROL_SOURCES
     src/slowcontrol/periodic_poller.cpp
     src/slowcontrol/data_collector.cpp
     src/slowcontrol/exclusions_file.cpp
+    src/slowcontrol/setpoints.cpp
 )
 
 set(SYNC_SOURCES

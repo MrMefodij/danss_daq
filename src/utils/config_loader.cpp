@@ -281,7 +281,7 @@ SystemConfig ConfigLoader::parse_system_config(const std::string& text, const st
         const Node s = root.object("system");
         s.warn_unknown({"poll_interval_sec", "eeprom_check_interval_sec", "modbus_timeout_ms",
                         "response_timeout_ms", "max_retries", "retry_delay_ms", "exclusions_file",
-                        "missing_component"});
+                        "missing_component", "setpoints_file", "setpoints_during_run"});
         cfg.poll_interval_sec = static_cast<uint32_t>(s.integer("poll_interval_sec", 1, 86400, DEFAULT_POLL_INTERVAL_SEC));
         cfg.eeprom_check_interval_sec = static_cast<uint32_t>(
             s.integer("eeprom_check_interval_sec", 60, 7 * 86400, DEFAULT_EEPROM_CHECK_INTERVAL_SEC));
@@ -294,6 +294,8 @@ SystemConfig ConfigLoader::parse_system_config(const std::string& text, const st
         if (missing != "alarm" && missing != "warning")
             s.fail("missing_component", "ожидается \"alarm\" или \"warning\", получено \"" + missing + "\"");
         cfg.missing_is_alarm = missing == "alarm";
+        if (s.has("setpoints_file")) cfg.setpoints_file = s.string("setpoints_file");
+        cfg.setpoints_during_run = s.boolean("setpoints_during_run", false);
     } else {
         cfg.poll_interval_sec = DEFAULT_POLL_INTERVAL_SEC;
         cfg.eeprom_check_interval_sec = DEFAULT_EEPROM_CHECK_INTERVAL_SEC;
@@ -357,11 +359,10 @@ SystemConfig ConfigLoader::parse_system_config(const std::string& text, const st
 
 SystemConfig ConfigLoader::load_system_config(const std::string& filename) {
     SystemConfig cfg = parse_system_config(read_file(filename), filename);
-    // Файл исключений — рядом с board_map.json, если путь относительный
-    if (!cfg.exclusions_file.empty() && cfg.exclusions_file[0] != '/') {
-        const auto slash = filename.find_last_of('/');
-        if (slash != std::string::npos) cfg.exclusions_file = filename.substr(0, slash + 1) + cfg.exclusions_file;
-    }
+    // Файлы исключений и уставок — рядом с board_map.json, если путь относительный
+    const auto slash = filename.find_last_of('/');
+    for (std::string* f : {&cfg.exclusions_file, &cfg.setpoints_file})
+        if (!f->empty() && (*f)[0] != '/' && slash != std::string::npos) *f = filename.substr(0, slash + 1) + *f;
     return cfg;
 }
 
