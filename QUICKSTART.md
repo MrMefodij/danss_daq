@@ -11,7 +11,8 @@ export MIDASSYS=/path/to/midas            # коммит c69c0853930b…
 mkdir -p build && cd build && cmake -DBUILD_TESTS=ON .. && make -j4 && ctest
 ```
 
-Только утилиты, без MIDAS — см. «Утилиты без MIDAS и CMake» в [doc/BUILD.md](doc/BUILD.md).
+Без MIDAS (утилиты, `danss_frontend --standalone`, тесты): `cmake -DWITH_MIDAS=OFF ..` — без
+`MIDASSYS` выбирается само; см. «Без MIDAS» в [doc/BUILD.md](doc/BUILD.md).
 
 ## 2. Найти платы
 

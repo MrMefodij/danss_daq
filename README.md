@@ -47,7 +47,8 @@ make -j4 && ctest
 
 Targets: `danss_core`, `danss_frontend`, `modbus_scanner`, `modbus_tool`, `danss_psu_fe`, `danss_sc_fe`;
 with tests: `test_config_loader`, `test_psu_worker`, `test_owon_psu`, `psu_bench`, `test_poller`.
-cvme1 and manual builds: [doc/BUILD.md](doc/BUILD.md).
+Without MIDAS (utilities, `danss_frontend --standalone`, tests): `cmake -DWITH_MIDAS=OFF ..` —
+chosen automatically when `MIDASSYS` is not set. cvme1, offline builds: [doc/BUILD.md](doc/BUILD.md).
 
 ## Running
 

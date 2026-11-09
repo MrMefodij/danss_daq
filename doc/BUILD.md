@@ -1,15 +1,15 @@
 # Сборка
 
-Обновлено 07.11.2026.
+Обновлено 09.11.2026.
 
 ## Зависимости
 
 | Что | Версия | Примечание |
 |---|---|---|
-| MIDAS | коммит `c69c0853930b226e96090725a0ba5cb2b4293a14` | один и тот же на всех машинах (frontend и сервер) |
+| MIDAS | коммит `c69c0853930b226e96090725a0ba5cb2b4293a14` | один и тот же на всех машинах (frontend и сервер); нужен только для `danss_psu_fe`, `danss_sc_fe` |
 | Компилятор | C++17 (MIDAS сам собран как C++20) | на cvme1 — conda GCC 13.4, системный GCC 7.5 не трогаем |
 | Boost | Asio + system, thread | Ubuntu 24.04 — 1.83; cvme1 — `libboost-devel` из conda |
-| nlohmann/json | 3.12 | CMake скачивает сам (FetchContent) |
+| nlohmann/json | 3.2+ | установленный (`nlohmann-json3-dev`, conda) или `-DJSON_INCLUDE_DIR=…`; иначе CMake скачивает 3.12 с GitHub |
 | CMake | 3.16+ | на cvme1 — 3.28 через `pip --user` |
 
 ## Обычная сборка
@@ -24,6 +24,24 @@ ctest                      # test_config_loader
 
 MIDAS подключается через `find_package(Midas)` из `$MIDASSYS` (цель `midas::midas` несёт
 пути к mvodb/midasio/mxml и zlib, с которыми MIDAS собран).
+
+## Без MIDAS (стенд, ноутбук, любой Linux/macOS)
+
+Утилиты и опрос без MIDAS — `modbus_scanner`, `modbus_tool`, `danss_frontend --standalone`,
+тесты — MIDAS не нужен. Нужны только компилятор C++17, CMake 3.16+, Boost (system, thread).
+
+```bash
+mkdir -p build && cd build
+cmake -DWITH_MIDAS=OFF -DBUILD_TESTS=ON ..   # без $MIDASSYS это выбирается само (с предупреждением)
+make -j4 modbus_scanner modbus_tool danss_frontend
+ctest
+```
+
+Debian/Ubuntu: `sudo apt install g++ cmake libboost-system-dev libboost-thread-dev nlohmann-json3-dev`.
+
+**Без интернета** (FetchContent не скачает json): положить один заголовок
+`json.hpp` (релиз nlohmann/json на GitHub, файл `single_include/nlohmann/json.hpp`) в
+`<каталог>/nlohmann/json.hpp` и собрать с `-DJSON_INCLUDE_DIR=<каталог>`.
 
 | Цель | Что это |
 |---|---|

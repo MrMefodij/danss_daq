@@ -9,8 +9,10 @@
 
 - [ ] Компьютер, к которому подключён USB-RS485 стенда: имя, ОС. Порт:
       `ls /dev/ttyUSB* /dev/ttyACM*` (Linux) или `ls /dev/cu.usbserial*` (macOS).
-- [ ] Собраны `modbus_scanner`, `modbus_tool` (MIDAS не нужен, `doc/BUILD.md` — ручная сборка),
-      по возможности `danss_frontend` и `danss_sc_fe`.
+- [ ] Собраны `modbus_scanner`, `modbus_tool`, `danss_frontend` — MIDAS не нужен:
+      `cmake -DWITH_MIDAS=OFF .. && make -j4 modbus_scanner modbus_tool danss_frontend`
+      (`doc/BUILD.md`, раздел «Без MIDAS»; без интернета — `-DJSON_INCLUDE_DIR`).
+      `danss_sc_fe` — только если на этом компьютере есть MIDAS c69c085.
 - [ ] Записать, какая процессорная плата — левая, какая — правая (если смотреть на детектор),
       сколько аналоговых плат и счётчиков реально установлено на каждой.
 
