@@ -1,0 +1,4 @@
+{
+  "description": "Ручные исключения состава плат SlowControl. Пишет danss_sc_fe при изменении /Equipment/SlowControl/Settings/Boards/<имя>/Exclude ...; руками править только при остановленном danss_sc_fe.",
+  "boards": {}
+}

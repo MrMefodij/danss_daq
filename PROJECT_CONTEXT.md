@@ -366,24 +366,38 @@ pty-устройство), `tests/mock_owon_server.py <port>`.
 **ODB `/Equipment/SlowControl`** (`danss_sc_fe -- --config config/board_map.json`):
 
 - Платы и ветки — только из JSON (ConfigLoader); порядок плат в банках = порядок в конфиге,
-  платы с `enabled: false` в банках есть (status 4, остальное −1).
-- `Settings/` — `Config file`; `Poll interval sec` (при первом запуске из JSON, дальше
-  действует значение в ODB, меняется на лету); `Poll now` (y → опрос сразу, сбрасывается);
+  платы с `enabled: false` в банках есть (status 4, остальное −1 / NaN).
+- `Settings/` — `Config file`, `Exclusions file`; `Poll interval sec` (при первом запуске из
+  JSON, дальше действует значение в ODB, меняется на лету); `Poll now` (y → опрос сразу);
   `Names BDAT|SIPI|SIPT` — подписи для истории.
-- `Readback/` — `Online`, `Stale`, `Offline`, `Disabled`, `With problems`, `Tripped`,
-  `All healthy` (все включённые платы online и без проблем), `Last cycle`.
-- `Boards/<имя>/` — `Status`, `Branch`, `Address`, `Update counter`, `Analog boards`,
-  `Problems`, `Last error`, `Reboots`, `Failures`.
-- `Variables/BDAT` — на плату 8 чисел: status (0 unknown, 1 online, 2 stale, 3 offline,
-  4 disabled), update counter, CPU temp (raw), HV status (input 1), маска trip, маска
-  подключённых аналоговых плат, число расхождений DAC, число перезагрузок; −1 — нет данных.
-- `Variables/SIPI`, `SIPT` — на плату 12 токов / температур (raw; −1 — нет данных, нет
-  аналоговой платы или датчика). Пересчёт в единицы — после ответа Игоря.
-- Алармы (класс `Alarm`): «SC <плата> offline», «stale», «trip», «DAC»; сброс — когда
-  условие ушло. Каждое срабатывание дублируется сообщением MERROR: MIDAS пишет TALK класса
-  не чаще раза в `System message interval` (60 с). Перезагрузка платы — сообщение, не аларм.
-- Цикл: поток опроса по завершении цикла ставит флаг, periodic-обработчик (1 с) публикует
-  событие и ODB. JRPC `poll_now`. Опрос идёт и вне рана.
+- `Settings/Boards/<имя>/` — **ручные исключения**: `Exclude analog board[3]`,
+  `Exclude counter[12]`, `Exclusion reason`. Каждое изменение — сообщение в журнал MIDAS
+  (что, было, причина) и сразу запись в файл исключений (`system.exclusions_file` в
+  board_map.json, путь от каталога конфига; атомарно). При старте **файл главнее ODB**; файла
+  ещё нет — берутся значения из ODB и файл создаётся.
+- `Readback/` — `Online`, `Stale`, `Offline`, `Disabled`, `With problems`, `With missing`,
+  `Tripped`, `All healthy` (все включённые платы online и без проблем; исключённое не
+  считается), `Missing policy`, `Last cycle`.
+- `Boards/<имя>/` — `Status`, `Branch`, `Address`, `Update counter`, `Analog boards seen`,
+  `Counters seen`, `Missing`, `Excluded`, `Problems`, `Last error`, `Reboots`, `Failures`,
+  `Current uA[12]`, `Temperature C[12]`.
+- `Variables/BDAT` — на плату 9 чисел: status (0 unknown, 1 online, 2 stale, 3 offline,
+  4 disabled), update counter, CPU temp (raw), HV status (input 1), маска trip, маска видимых
+  аналоговых плат, маска видимых счётчиков, число расхождений DAC, число перезагрузок; −1 —
+  нет данных.
+- `Variables/SIPI` — токи утечки, мкА (ADC × 6.6 / 1024); `SIPT` — температуры SiPM, °C
+  (int16 / 16). NaN — нет данных (плата не отвечает / нет доступа к термометру); mhttpd
+  такие точки не рисует.
+- **Состав** (письмо Игоря 09.11.2026): аналоговая плата видна, если не все 32 обратных чтения
+  её DAC = 0; счётчик — если ID термометра ≠ 0; счётчик есть, а температура 0x8001 — ошибка
+  температуры. Всё, что не исключено вручную, должно быть на месте. Реакция на отсутствие —
+  `system.missing_component`: `"alarm"` (по умолчанию) или `"warning"` (только сообщение);
+  **политика ещё обсуждается** (Игорь: аларм, отключать только вручную).
+- Алармы (класс `Alarm`): «SC <плата> offline», «stale», «trip», «DAC», «missing»,
+  «SC exclusions file» (не удалось записать файл). Каждое срабатывание дублируется сообщением
+  MERROR: MIDAS пишет TALK класса не чаще раза в 60 с. Перезагрузка платы — сообщение.
+- Цикл: поток опроса (статус, уставки, обратное чтение DAC, ID термометров) по завершении
+  цикла ставит флаг, periodic-обработчик (1 с) публикует событие и ODB. JRPC `poll_now`.
 
 ---
 

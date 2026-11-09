@@ -122,7 +122,9 @@ void PeriodicPoller::run_branch(Branch& b) {
                 PollResult r;
                 for (int attempt = 0; attempt <= retries; ++attempt) {
                     BoardData d;
-                    if (client.read_status(d) && client.read_settings(d) && client.read_dac_readback(d)) {
+                    // ID термометров — каждый цикл: по ним видно, подключены ли счётчики
+                    if (client.read_status(d) && client.read_settings(d) && client.read_dac_readback(d)
+                        && client.read_ids(d)) {
                         r.ok = true;
                         r.data = d;
                         break;

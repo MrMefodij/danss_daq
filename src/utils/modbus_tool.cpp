@@ -119,16 +119,29 @@ int cmd_info(BoardClient& b) {
         auto mm = d.dac_mismatches();
         std::printf("  DAC readback     %s\n",
                     mm.empty() ? "all 96 equal to setpoints" : (std::to_string(mm.size()) + " channels differ (see 'dac')").c_str());
+        // Аналоговая плата видна, если не все 32 обратных чтения её DAC = 0 (письмо Игоря 09.11.2026)
+        std::string seen;
+        for (size_t a = 0; a < NUM_ANALOG_BOARDS; ++a) {
+            bool any = false;
+            for (size_t i = a * 32; i < (a + 1) * 32; ++i) any = any || d.dac_readback[i] != 0;
+            seen += any ? std::to_string(a) + " " : std::string("- ");
+        }
+        std::printf("  analog boards    %s (seen = some DAC readback != 0)\n", seen.c_str());
     } else {
         std::printf("  DAC readback: %s\n", b.last_error().c_str());
         ok = false;
     }
 
-    std::printf("\n  %3s %5s %8s %6s %4s   %s\n", "ch", "abrd", "current", "temp", "HV", "thermometer ID");
+    std::printf("\n  %3s %5s %8s %7s %6s %7s %4s   %s\n", "ch", "abrd", "I raw", "I uA", "T raw", "T C", "HV",
+                "thermometer ID (0 = no counter)");
     for (size_t ch = 0; ch < NUM_SIPM_CHANNELS; ++ch) {
-        std::printf("  %3zu %5zu %8u %6u %4s   %s\n", ch, analog_board_of_channel(ch), d.sipm_channels[ch].leakage_current,
-                    d.sipm_channels[ch].temperature, hv_channel_enabled(d.hv_status, ch) ? "on" : "off",
-                    d.sipm_channels[ch].thermometer_id.c_str());
+        const auto& c = d.sipm_channels[ch];
+        char t[16];
+        if (c.temperature == SIPM_TEMP_NO_ACCESS) std::snprintf(t, sizeof(t), "n/a");
+        else std::snprintf(t, sizeof(t), "%.2f", sipm_temperature_c(c.temperature));
+        std::printf("  %3zu %5zu %8u %7.3f %6u %7s %4s   %s\n", ch, analog_board_of_channel(ch), c.leakage_current,
+                    sipm_current_ua(c.leakage_current), c.temperature, t, hv_channel_enabled(d.hv_status, ch) ? "on" : "off",
+                    c.thermometer_id.c_str());
     }
     return ok ? 0 : 1;
 }

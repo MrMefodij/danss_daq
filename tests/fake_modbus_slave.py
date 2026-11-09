@@ -20,15 +20,19 @@
     после сохранения (подтверждено 07.11.2026); со стёртым scratchpad плата стартует на 247;
   - scratchpad загружается в рабочие регистры при старте (как у реальной платы);
   - несколько плат на одной «шине»: --address 1,2,4 (у каждой свой файл <--state>_<адрес>);
-  - --analog — маска подключённых аналоговых плат (бит на плату, по умолчанию 7 = все три).
-    Каналы неподключённой платы — как у платы 17 без периферии: температура 0x8001,
-    ID термометра 0, обратное чтение DAC 0;
+  - --analog — маска подключённых аналоговых плат (бит на плату, по умолчанию 7 = все три):
+    у неподключённой обратное чтение её 32 DAC = 0 (как у платы 17 без периферии);
+  - --counters — маска подключённых счётчиков (бит на канал 0–11, по умолчанию 0xFFF):
+    у неподключённого ID термометра 0 и температура 0x8001 (ошибка доступа, письмо Игоря 09.11);
+  - токи raw 345 + канал; температуры 400 + 16·канал (25 °C + канал), канал 11 — 0xFFF0 (−1 °C);
+  - у новой платы (без --state) уставки DAC 100 + номер канала;
   - --control файл — сценарии сбоев для тестов: дописывайте строки «<адрес> <команда> [арг]»:
       freeze / unfreeze   — цикл платы стоит (счётчик не растёт)
       silent / talk       — плата перестаёт / снова начинает отвечать
       reboot              — перезагрузка (счётчик с нуля, уставки из scratchpad)
       trip <маска>        — биты trip по аналоговым платам
       analog <маска>      — какие аналоговые платы подключены
+      counters <маска>    — какие счётчики подключены
 """
 import argparse
 import json
@@ -54,17 +58,19 @@ def crc(b):
 
 
 class Board:
-    def __init__(self, address, state_file, period, analog_mask=7):
+    def __init__(self, address, state_file, period, analog_mask=7, counter_mask=0xFFF):
         self.lock = threading.Lock()
         self.frozen = False
         self.silent = False
         self.trip_mask = 0
         self.analog_mask = analog_mask
+        self.counter_mask = counter_mask
         self.state_file = state_file
         self.period = period
         self.counter = 0
         self.holding = [0] * 101
         self.holding[99] = int(period * 1000)
+        self.holding[0:96] = [100 + i for i in range(96)]
         self.readback = [0] * 96
         self.sp = [0xFFFF] * SP_WORDS
         self.erased = False
@@ -88,6 +94,9 @@ class Board:
     def analog(self, board):
         return (self.analog_mask >> board) & 1 == 1
 
+    def has_counter(self, ch):
+        return (self.counter_mask >> ch) & 1 == 1
+
     def reboot(self):
         with self.lock:
             self.counter = 0
@@ -110,6 +119,7 @@ class Board:
             elif cmd == "talk": self.silent = False
             elif cmd == "trip": self.trip_mask = int(arg, 0)
             elif cmd == "analog": self.analog_mask = int(arg, 0)
+            elif cmd == "counters": self.counter_mask = int(arg, 0)
         if cmd == "reboot":
             self.reboot()
 
@@ -171,16 +181,19 @@ class Board:
         if r == 2:
             return self.holding[97] & 0x0707  # допущение: раскладка как у input 2
         if 3 <= r <= 14:
-            return 1000 + r - 3
+            return 345 + r - 3
         if 15 <= r <= 26:
-            return 2000 + r - 15 if self.analog((r - 15) // 4) else 0x8001
+            ch = r - 15
+            if not self.has_counter(ch):
+                return 0x8001
+            return 0xFFF0 if ch == 11 else 400 + 16 * ch
         if r == 27:
             return 3000
         if 28 <= r <= 99 or 247 <= r <= 249:
             return 0
         if 100 <= r <= 147:
             t, w = divmod(r - 100, 4)
-            return [0x28FF, 0x641E, 0x8316, 0x0550 + t][w] if self.analog(t // 4) else 0
+            return [0x28FF, 0x641E, 0x8316, 0x0550 + t][w] if self.has_counter(t) else 0
         if r == 148:
             return 0x1234
         if r == 149:
@@ -257,6 +270,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--address", default="1", help="адрес или список через запятую")
     ap.add_argument("--analog", type=lambda x: int(x, 0), default=7)
+    ap.add_argument("--counters", type=lambda x: int(x, 0), default=0xFFF)
     ap.add_argument("--control", default="")
     ap.add_argument("--state", default="")
     ap.add_argument("--period", type=float, default=0.5)
@@ -266,7 +280,7 @@ def main():
     boards = []
     for ad in addrs:
         state = a.state if len(addrs) == 1 else (f"{a.state}_{ad}" if a.state else "")
-        boards.append(Board(ad, state, a.period, a.analog))
+        boards.append(Board(ad, state, a.period, a.analog, a.counters))
     master, slave = pty.openpty()
     tty.setraw(slave)
     print(os.ttyname(slave), flush=True)

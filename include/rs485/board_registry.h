@@ -31,6 +31,7 @@ struct BoardState {
     BoardStatus status = BoardStatus::UNKNOWN;
     BoardData data;                     ///< последний успешный снимок
     collector::BoardHealth health;      ///< проверка последнего снимка
+    collector::Exclusions excluded;     ///< что оператор исключил из проверки (danss_sc_fe)
     uint64_t last_ok_ms = 0;            ///< время последнего ответа
     uint64_t last_attempt_ms = 0;
     uint32_t consecutive_failures = 0;
@@ -62,6 +63,10 @@ public:
 
     /// Записать результат опроса; возвращает новое состояние платы
     BoardState update(uint8_t branch_id, uint8_t address, const PollResult& r);
+    /// Ручные исключения (аналоговые платы, счётчики); действуют со следующего опроса.
+    /// Возвращает false, если такой платы нет.
+    bool set_exclusions(uint8_t branch_id, uint8_t address, const collector::Exclusions& ex);
+
     /// Порт ветки недоступен — все опрашиваемые платы ветки OFFLINE
     void mark_branch_offline(uint8_t branch_id, const std::string& error, uint64_t time_ms);
 
@@ -71,11 +76,12 @@ public:
 
     struct Summary {
         size_t total = 0, online = 0, stale = 0, offline = 0, disabled = 0, unknown = 0;
-        size_t with_problems = 0, tripped = 0;
+        size_t with_problems = 0, tripped = 0, with_missing = 0;
     };
     Summary summary() const;
 
-    /// Все опрашиваемые платы на связи, данные свежие, нет trip.
+    /// Все опрашиваемые платы на связи, данные свежие, проблем нет (trip, состав, DAC).
+    /// Исключённое оператором вручную не считается.
     /// Кандидат в условие интерлока HV — само условие ещё не решено группой.
     bool all_enabled_healthy() const;
 

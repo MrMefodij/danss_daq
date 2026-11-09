@@ -1,0 +1,11 @@
+{
+  "description": "Ручные исключения состава плат SlowControl. Пишет danss_sc_fe при изменении /Equipment/SlowControl/Settings/Boards/<имя>/Exclude ...; руками править только при остановленном danss_sc_fe.",
+  "boards": {
+    "BENCH-17": {
+      "excluded_analog_boards": [0, 1, 2],
+      "excluded_counters": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      "reason": "стол: процессорная плата без аналоговых плат и счётчиков",
+      "changed": "2026-11-09 10:00:00"
+    }
+  }
+}

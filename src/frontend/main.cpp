@@ -26,20 +26,22 @@ void print_boards(const BoardRegistry& reg, uint64_t cycle) {
     std::printf("\n--- cycle %llu: %zu boards: %zu online, %zu stale, %zu offline, %zu disabled; problems: %zu, trip: %zu\n",
                 static_cast<unsigned long long>(cycle), sm.total, sm.online, sm.stale, sm.offline, sm.disabled,
                 sm.with_problems, sm.tripped);
-    std::printf("%-12s %3s %4s %-8s %7s %6s %5s %5s %4s %7s %6s  %s\n", "board", "br", "addr", "status", "update#",
-                "analog", "temps", "trip", "dac!", "reboots", "fails", "notes");
+    std::printf("%-12s %3s %4s %-8s %7s %6s %4s %5s %5s %4s %7s %6s  %s\n", "board", "br", "addr", "status", "update#",
+                "analog", "cnt", "temps", "trip", "dac!", "reboots", "fails", "notes");
     for (const auto& b : reg.snapshot()) {
         const auto& h = b.health;
         std::string analog;
         for (size_t i = 0; i < constants::NUM_ANALOG_BOARDS; ++i) analog += h.analog_present[i] ? '1' : '-';
         size_t temps = 0;
         for (bool v : h.temperature_valid) temps += v;
+        const size_t counters = h.counters();
         std::string notes = b.status == BoardStatus::OFFLINE ? b.last_error : "";
         for (const auto& p : h.problems) notes += (notes.empty() ? "" : "; ") + p;
         const bool has = b.status == BoardStatus::ONLINE || b.status == BoardStatus::STALE;
-        std::printf("%-12s %3u %4u %-8s %7s %6s %5s %5s %4s %7llu %6llu  %s\n", b.config.name.c_str(), b.branch_id,
+        std::printf("%-12s %3u %4u %-8s %7s %6s %4s %5s %5s %4s %7llu %6llu  %s\n", b.config.name.c_str(), b.branch_id,
                     b.config.address, to_string(b.status), has ? std::to_string(b.data.update_counter).c_str() : "-",
-                    has ? analog.c_str() : "-", has ? std::to_string(temps).c_str() : "-",
+                    has ? analog.c_str() : "-", has ? std::to_string(counters).c_str() : "-",
+                    has ? std::to_string(temps).c_str() : "-",
                     has ? std::to_string(h.tripped_boards).c_str() : "-",
                     has ? std::to_string(h.dac_mismatches.size()).c_str() : "-",
                     static_cast<unsigned long long>(b.reboots), static_cast<unsigned long long>(b.failures), notes.c_str());

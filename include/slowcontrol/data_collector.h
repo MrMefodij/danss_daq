@@ -3,9 +3,14 @@
 
 // Разбор прочитанных регистров платы: что подключено, что исправно, что изменилось.
 //
-// Здесь собраны все места, которые зависят от ещё не подтверждённых деталей прошивки
-// (письмо Игорю 07.11.2026). Когда придут ответы, меняются только функции этого файла;
-// опрос (PeriodicPoller), состояние плат (BoardRegistry) и алармы остаются как есть.
+// Признаки — по письму Игоря 09.11.2026 (doc/MODBUS_MAP_v2.md, «Ответы Игоря»):
+//  - счётчик (его сторона) подключён, если ID термометра (input 100–147) не нулевой;
+//    температура 0x8001 — ошибка доступа к термометру счётчика;
+//  - явного признака аналоговой платы нет: считаем её подключённой, если не все 32 обратных
+//    чтения DAC (input 150–245) равны 0 (без платы читать нечего — там 0). При всех уставках
+//    этой платы = 0 признак не работает — в реальной работе такие уставки маловероятны;
+//  - в рабочем режиме должны быть все аналоговые платы и все счётчики. Что отсутствует и не
+//    исключено оператором вручную (Exclusions) — проблема платы.
 
 #include "common/types.h"
 
@@ -17,11 +22,8 @@
 namespace danss {
 namespace collector {
 
-// ---- Допущения (вопросы 1–3 к Игорю) -----------------------------------------
-
-/// Метка «датчика нет» в регистрах температуры SiPM.
-/// ДОПУЩЕНИЕ: так плата 17 без термометров показывает все 12 каналов (07.11.2026).
-constexpr uint16_t TEMPERATURE_NO_SENSOR = 0x8001;
+/// Метка «нет доступа к термометру счётчика» в регистрах температуры SiPM
+constexpr uint16_t TEMPERATURE_NO_SENSOR = constants::SIPM_TEMP_NO_ACCESS;
 
 /// Минимально возможный цикл платы, мс — для отличия перезагрузки от переполнения счётчика.
 /// Плата 17 при задержке 0 — 134 мс; берём с большим запасом.
@@ -31,34 +33,54 @@ constexpr size_t DAC_CHANNELS_PER_ANALOG_BOARD = constants::NUM_DAC_CHANNELS / c
 
 bool temperature_valid(uint16_t raw);
 
-/// Подключена ли аналоговая плата (0–2).
-/// ДОПУЩЕНИЕ: подключена, если хотя бы у одного из её каналов SiPM температура не «датчика нет».
+/// Аналоговая плата (0–2) подключена: не все 32 обратных чтения DAC этой платы равны 0
 bool analog_board_present(const BoardData& d, size_t analog_board);
 
-/// К какой аналоговой плате относится канал DAC (0–95).
-/// ДОПУЩЕНИЕ: по 32 подряд (0–31 — плата 0, 32–63 — плата 1, 64–95 — плата 2).
+/// Счётчик на канале 0–11 подключён: ID термометра прочитан и не нулевой
+bool counter_present(const BoardData& d, size_t channel);
+
+/// К какой аналоговой плате относится канал DAC (0–95): по 32 подряд
 size_t analog_board_of_dac(size_t dac_channel);
+
+/// Что оператор вручную исключил из проверки (бит на аналоговую плату / на канал счётчика)
+struct Exclusions {
+    uint16_t analog_boards = 0;
+    uint16_t counters = 0;
+};
 
 // ---- Результат проверки ---------------------------------------------------------
 
 struct BoardHealth {
     std::array<bool, constants::NUM_ANALOG_BOARDS> analog_present{};
+    std::array<bool, constants::NUM_SIPM_CHANNELS> counter_present{};
     std::array<bool, constants::NUM_SIPM_CHANNELS> temperature_valid{};
-    uint16_t tripped_boards = 0;            ///< биты t из input 1 (только подключённые платы)
-    std::vector<size_t> dac_mismatches;     ///< каналы DAC подключённых плат, где применено не то
+    uint16_t missing_analog = 0;            ///< ожидаются (не исключены), но не видны
+    uint16_t missing_counters = 0;          ///< ожидаются (не исключены), но ID = 0
+    uint16_t temperature_errors = 0;        ///< счётчик есть, а температура 0x8001
+    uint16_t tripped_boards = 0;            ///< биты t из input 1 — подключённые и не исключённые платы
+    std::vector<size_t> dac_mismatches;     ///< каналы DAC подключённых и не исключённых плат
     bool fresh = false;                     ///< счётчик input 0 изменился с прошлого опроса
     bool rebooted = false;                  ///< счётчик сбросился — плата перезагружалась
     std::vector<std::string> problems;      ///< понятные человеку сообщения (для алармов)
 
     bool ok() const { return problems.empty(); }
+    bool missing() const { return missing_analog || missing_counters || temperature_errors; }
     size_t analog_boards() const;
+    size_t counters() const;
+    uint16_t analog_mask() const;
+    uint16_t counter_mask() const;
 };
 
 /// Проверить свежий снимок платы.
 /// @param now   только что прочитанные данные (data_valid == true)
 /// @param prev  предыдущий успешный снимок или nullptr (первый опрос)
 /// @param elapsed_ms время между снимками
-BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed_ms);
+/// @param excluded что оператор исключил из проверки
+BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed_ms,
+                     const Exclusions& excluded = {});
+
+/// "0, 2, 5-7" — номера установленных битов (для сообщений)
+std::string mask_to_list(uint16_t mask, size_t bits);
 
 } // namespace collector
 } // namespace danss

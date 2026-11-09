@@ -176,6 +176,12 @@ struct SystemConfig {
 
     // Power supply (optional; present() == !channels.empty())
     PSUConfig power_supply;          ///< OWON ODP6033 configuration
+
+    // Состав плат (danss_sc_fe)
+    std::string exclusions_file;     ///< JSON с ручными исключениями аналоговых плат и счётчиков;
+                                     ///< относительный путь — от каталога board_map.json; пусто — не сохранять
+    bool missing_is_alarm = true;    ///< отсутствует неисключённая аналоговая плата/счётчик: аларм (true)
+                                     ///< или только предупреждение (false) — "missing_component"
 };
 
 // =============================================================================

@@ -55,7 +55,7 @@ BoardState BoardRegistry::update(uint8_t branch_id, uint8_t address, const PollR
     } else {
         const bool had = s.data.data_valid && s.last_ok_ms > 0;
         const double elapsed = had ? static_cast<double>(r.time_ms - s.last_ok_ms) : 0.0;
-        s.health = collector::evaluate(r.data, had ? &s.data : nullptr, elapsed);
+        s.health = collector::evaluate(r.data, had ? &s.data : nullptr, elapsed, s.excluded);
         if (s.health.rebooted) s.reboots++;
         s.data = r.data;
         s.data.board_name = s.config.name;
@@ -75,6 +75,14 @@ BoardState BoardRegistry::update(uint8_t branch_id, uint8_t address, const PollR
     }
     if (r.ok && s.health.rebooted) LOG_WARNING("Board " + s.config.name + ": rebooted (update counter restarted)");
     return s;
+}
+
+bool BoardRegistry::set_exclusions(uint8_t branch_id, uint8_t address, const collector::Exclusions& ex) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = boards_.find({branch_id, address});
+    if (it == boards_.end()) return false;
+    it->second.excluded = ex;
+    return true;
 }
 
 void BoardRegistry::mark_branch_offline(uint8_t branch_id, const std::string& error, uint64_t time_ms) {
@@ -129,6 +137,7 @@ BoardRegistry::Summary BoardRegistry::summary() const {
         if (s.status == BoardStatus::ONLINE || s.status == BoardStatus::STALE) {
             if (!s.health.ok()) sm.with_problems++;
             if (s.health.tripped_boards) sm.tripped++;
+            if (s.health.missing()) sm.with_missing++;
         }
     }
     return sm;
@@ -140,7 +149,7 @@ bool BoardRegistry::all_enabled_healthy() const {
     for (const auto& [key, s] : boards_) {
         if (s.status == BoardStatus::DISABLED) continue;
         any = true;
-        if (s.status != BoardStatus::ONLINE || s.health.tripped_boards) return false;
+        if (s.status != BoardStatus::ONLINE || !s.health.ok()) return false;
     }
     return any;
 }

@@ -6,7 +6,9 @@
     "modbus_timeout_ms": 1000,
     "response_timeout_ms": 500,
     "max_retries": 3,
-    "retry_delay_ms": 100
+    "retry_delay_ms": 100,
+    "exclusions_file": "board_exclusions_stand.json",
+    "missing_component": "alarm"
   },
   "branches": [
     {

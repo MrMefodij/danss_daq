@@ -225,7 +225,20 @@ constexpr const char* BANK_NAME_STATISTICS = "STAT";
 constexpr const char* BANK_NAME_ALARMS = "ALRM";
 constexpr const char* BANK_NAME_SIPM_CURRENT = "SIPI";   // danss_sc_fe: токи SiPM, плата × 12 (raw)
 constexpr const char* BANK_NAME_SIPM_TEMP = "SIPT";      // danss_sc_fe: температуры SiPM, плата × 12 (raw, -1 = нет датчика)
-constexpr size_t BDAT_VALUES_PER_BOARD = 8;              // danss_sc_fe: состояние платы в банке BDAT
+constexpr size_t BDAT_VALUES_PER_BOARD = 9;              // danss_sc_fe: состояние платы в банке BDAT
+
+// Пересчёт в физические единицы (письмо Игоря 09.11.2026)
+constexpr double SIPM_CURRENT_UA_FULL_SCALE = 6.6;       // 10-битный АЦП: 1023 ≈ 6.6 мкА
+constexpr double SIPM_CURRENT_ADC_COUNTS = 1024.0;
+constexpr double SIPM_TEMP_LSB_C = 1.0 / 16.0;           // температура SiPM: int16, 1/16 °C
+constexpr uint16_t SIPM_TEMP_NO_ACCESS = 0x8001;         // ошибка доступа к термометру счётчика
+constexpr uint16_t ALL_COUNTERS_MASK = (1u << NUM_SIPM_CHANNELS) - 1;
+constexpr uint16_t ALL_ANALOG_BOARDS_MASK = (1u << NUM_ANALOG_BOARDS) - 1;
+
+/// Ток утечки SiPM, мкА
+constexpr double sipm_current_ua(uint16_t adc) { return adc * SIPM_CURRENT_UA_FULL_SCALE / SIPM_CURRENT_ADC_COUNTS; }
+/// Температура SiPM, °C (raw — знаковое 16-битное в 1/16 °C)
+constexpr double sipm_temperature_c(uint16_t raw) { return static_cast<int16_t>(raw) * SIPM_TEMP_LSB_C; }
 
 // =============================================================================
 // Power Supply (OWON ODP6033 / SCPI over TCP)

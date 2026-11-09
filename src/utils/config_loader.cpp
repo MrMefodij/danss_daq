@@ -280,7 +280,8 @@ SystemConfig ConfigLoader::parse_system_config(const std::string& text, const st
     if (root.has("system")) {
         const Node s = root.object("system");
         s.warn_unknown({"poll_interval_sec", "eeprom_check_interval_sec", "modbus_timeout_ms",
-                        "response_timeout_ms", "max_retries", "retry_delay_ms"});
+                        "response_timeout_ms", "max_retries", "retry_delay_ms", "exclusions_file",
+                        "missing_component"});
         cfg.poll_interval_sec = static_cast<uint32_t>(s.integer("poll_interval_sec", 1, 86400, DEFAULT_POLL_INTERVAL_SEC));
         cfg.eeprom_check_interval_sec = static_cast<uint32_t>(
             s.integer("eeprom_check_interval_sec", 60, 7 * 86400, DEFAULT_EEPROM_CHECK_INTERVAL_SEC));
@@ -288,6 +289,11 @@ SystemConfig ConfigLoader::parse_system_config(const std::string& text, const st
         cfg.response_timeout_ms = static_cast<uint32_t>(s.integer("response_timeout_ms", 10, 60000, DEFAULT_RESPONSE_TIMEOUT_MS));
         cfg.max_retries = static_cast<uint8_t>(s.integer("max_retries", 0, 20, DEFAULT_MAX_RETRIES));
         cfg.retry_delay_ms = static_cast<uint32_t>(s.integer("retry_delay_ms", 0, 60000, DEFAULT_RETRY_DELAY_MS));
+        if (s.has("exclusions_file")) cfg.exclusions_file = s.string("exclusions_file");
+        const std::string missing = s.string("missing_component", std::string("alarm"));
+        if (missing != "alarm" && missing != "warning")
+            s.fail("missing_component", "ожидается \"alarm\" или \"warning\", получено \"" + missing + "\"");
+        cfg.missing_is_alarm = missing == "alarm";
     } else {
         cfg.poll_interval_sec = DEFAULT_POLL_INTERVAL_SEC;
         cfg.eeprom_check_interval_sec = DEFAULT_EEPROM_CHECK_INTERVAL_SEC;
@@ -350,7 +356,13 @@ SystemConfig ConfigLoader::parse_system_config(const std::string& text, const st
 }
 
 SystemConfig ConfigLoader::load_system_config(const std::string& filename) {
-    return parse_system_config(read_file(filename), filename);
+    SystemConfig cfg = parse_system_config(read_file(filename), filename);
+    // Файл исключений — рядом с board_map.json, если путь относительный
+    if (!cfg.exclusions_file.empty() && cfg.exclusions_file[0] != '/') {
+        const auto slash = filename.find_last_of('/');
+        if (slash != std::string::npos) cfg.exclusions_file = filename.substr(0, slash + 1) + cfg.exclusions_file;
+    }
+    return cfg;
 }
 
 // =============================================================================

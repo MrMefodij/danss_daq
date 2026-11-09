@@ -62,6 +62,9 @@ export MIDAS_EXPTAB=$HOME/daq/online/exptab
 
 В mhttpd: `/Equipment/SlowControl/Readback` — сводка (`All healthy`), `Boards/<имя>` — по плате,
 `Settings/Poll interval sec` — период опроса (меняется на лету), `Settings/Poll now`.
+Ручные исключения — `Settings/Boards/<имя>/Exclude analog board`, `Exclude counter`,
+`Exclusion reason`; сохраняются в `config/board_exclusions_*.json`. Для платы 17 на столе всё
+уже исключено (`config/board_exclusions_bench.json`).
 
 ## 6. Проверить конфиг плат
 
