@@ -227,6 +227,11 @@ constexpr const char* BANK_NAME_SIPM_CURRENT = "SIPI";   // danss_sc_fe: ток�
 constexpr const char* BANK_NAME_SIPM_TEMP = "SIPT";      // danss_sc_fe: температуры SiPM, плата × 12 (raw, -1 = нет датчика)
 constexpr size_t BDAT_VALUES_PER_BOARD = 9;              // danss_sc_fe: состояние платы в банке BDAT
 
+// DAC: обратное чтение — уставка, округлённая вниз до шага (стенд 16.11.2026: 100 и 104 читаются
+// как 96). ДОПУЩЕНИЕ: шаг 16 (12-битный DAC в старших битах регистра) — уточнить у Игоря.
+constexpr uint16_t DAC_STEP = 16;
+constexpr uint16_t dac_applied(uint16_t setpoint) { return static_cast<uint16_t>(setpoint - setpoint % DAC_STEP); }
+
 // Пересчёт в физические единицы (письмо Игоря 09.11.2026)
 constexpr double SIPM_CURRENT_UA_FULL_SCALE = 6.6;       // 10-битный АЦП: 1023 ≈ 6.6 мкА
 constexpr double SIPM_CURRENT_ADC_COUNTS = 1024.0;

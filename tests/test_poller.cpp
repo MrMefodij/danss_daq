@@ -45,7 +45,7 @@ BoardData board_with(uint16_t counter, uint16_t analog_mask, uint16_t counter_ma
     d.update_counter = counter;
     for (size_t i = 0; i < constants::NUM_DAC_CHANNELS; ++i) {
         d.dac_settings[i] = static_cast<uint16_t>(100 + i);
-        d.dac_readback[i] = ((analog_mask >> collector::analog_board_of_dac(i)) & 1) ? d.dac_settings[i] : 0;
+        d.dac_readback[i] = ((analog_mask >> collector::analog_board_of_dac(i)) & 1) ? constants::dac_applied(d.dac_settings[i]) : 0;
     }
     for (size_t ch = 0; ch < constants::NUM_SIPM_CHANNELS; ++ch) {
         const bool c = (counter_mask >> ch) & 1;
@@ -163,6 +163,8 @@ void test_setpoints() {
         parse_setpoints(j, "test");
     } catch (const ConfigError&) { threw = true; }
     check(threw, "недопустимый HV enable в файле — ошибка");
+    check(constants::dac_applied(100) == 96 && constants::dac_applied(104) == 96 && constants::dac_applied(112) == 112,
+          "шаг DAC 16: 100, 104 -> 96 (как на стенде), 112 -> 112");
 }
 
 void test_exclusions_file() {
@@ -316,8 +318,9 @@ void test_poller(const std::string& device, const std::string& control) {
     check(std::chrono::duration<double>(clk::now() - tc).count() < 3.0, "команда выполнена сразу, не по расписанию опроса");
     auto b1 = reg.get(0, 1);
     check(b1->data.dac_settings[5] == 777 && b1->data.hv_enable == 0x00F, "реестр сразу видит новые уставки");
-    check(wait_for([&] { auto x = reg.get(0, 1); return x->data.dac_readback[5] == 777 || (poller.poll_now(), false); }, 5),
-          "обратное чтение DAC 5 = 777 (аналоговая плата 0 подключена)");
+    check(wait_for([&] { auto x = reg.get(0, 1); return x->data.dac_readback[5] == 768 || (poller.poll_now(), false); }, 5),
+          "обратное чтение DAC 5: 777 -> 768 (шаг 16), аналоговая плата 0 подключена");
+    check(reg.get(0, 1)->health.dac_mismatches.empty(), "округление до шага 16 — не расхождение DAC");
     checkr(cmd(BoardCommand::Type::SAVE_TO_FLASH, 1, sp, 0), "сохранение во flash");
     sp.dac[5] = 100;
     check(cmd(BoardCommand::Type::WRITE_SETPOINTS, 1, sp, BoardSetpoints::DAC), "DAC 5 -> 100");

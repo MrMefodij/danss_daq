@@ -208,12 +208,21 @@ bool BoardClient::write_dac_verified(const std::array<uint16_t, NUM_DAC_CHANNELS
                                      std::vector<size_t>& mismatches, double timeout_s) {
     mismatches.clear();
     if (!write_all_dac(values)) return false;
-    // Ждём два цикла: запись могла попасть в середину текущего
-    if (!wait_next_cycle(timeout_s) || !wait_next_cycle(timeout_s)) return false;
-    BoardData d;
-    if (!read_dac_readback(d)) return false;
-    for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i)
-        if (d.dac_readback[i] != values[i]) mismatches.push_back(i);
+    auto compare = [&]() {
+        mismatches.clear();
+        BoardData d;
+        if (!read_dac_readback(d)) return false;
+        for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i)
+            if (d.dac_readback[i] != dac_applied(values[i])) mismatches.push_back(i);
+        return true;
+    };
+    // Стенд 16.11.2026: DAC применяется сразу при записи (обратное чтение меняется и при стоящем
+    // цикле платы). Сверяем сразу; не сошлось — ждём цикл (на всякий случай) и сверяем ещё раз
+    if (!compare()) return false;
+    if (!mismatches.empty()) {
+        if (!wait_next_cycle(timeout_s)) return false;
+        if (!compare()) return false;
+    }
     if (!mismatches.empty())
         return fail(std::to_string(mismatches.size()) + " DAC channels: readback differs from written value");
     return true;

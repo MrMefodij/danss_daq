@@ -122,7 +122,8 @@ class Board:
             self.readback = self._readback()
 
     def _readback(self):
-        return [self.holding[i] if self.analog(i // 32) else 0 for i in range(96)]
+        # DAC применяет уставку, округлённую вниз до шага 16 (стенд 16.11.2026: 100 и 104 -> 96)
+        return [self.holding[i] - self.holding[i] % 16 if self.analog(i // 32) else 0 for i in range(96)]
 
     def control(self, cmd, arg):
         with self.lock:

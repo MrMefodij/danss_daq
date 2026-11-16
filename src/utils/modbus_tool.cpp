@@ -201,10 +201,10 @@ int cmd_watch(BoardClient& b, double seconds) {
 int cmd_dac(BoardClient& b) {
     BoardData d;
     if (!b.read_settings(d) || !b.read_dac_readback(d)) return die(b);
-    std::printf("DAC ch: setpoint / applied   (* = differ)\n");
+    std::printf("DAC ch: setpoint / applied   (* = differ beyond DAC step %u)\n", DAC_STEP);
     for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i) {
         std::printf("  %2zu: %5u / %5u%s%s", i, d.dac_settings[i], d.dac_readback[i],
-                    d.dac_settings[i] != d.dac_readback[i] ? "*" : " ", (i % 4 == 3) ? "\n" : "   ");
+                    dac_applied(d.dac_settings[i]) != d.dac_readback[i] ? "*" : " ", (i % 4 == 3) ? "\n" : "   ");
     }
     auto mm = d.dac_mismatches();
     std::printf("%zu channel(s) differ\n", mm.size());
@@ -213,23 +213,45 @@ int cmd_dac(BoardClient& b) {
 
 int cmd_dac_set(BoardClient& b, const std::vector<std::string>& a) {
     if (a.size() < 2) { usage(); return 2; }
-    BoardData d;
-    if (!b.read_settings(d)) return die(b);
-    std::array<uint16_t, NUM_DAC_CHANNELS> v = d.dac_settings;
     const uint16_t value = parse_u16(a[1]);
-    if (a[0] == "all") v.fill(value);
-    else {
+    if (a[0] != "all") {
+        // Один канал: пишем только его и сверяем только его (DAC применяется сразу при записи)
         long ch = parse_num(a[0]);
         if (ch < 0 || ch >= static_cast<long>(NUM_DAC_CHANNELS)) throw std::invalid_argument("DAC channel 0-95");
-        v[static_cast<size_t>(ch)] = value;
+        const size_t c = static_cast<size_t>(ch);
+        if (!b.write_dac(c, value)) return die(b);
+        const uint16_t expect = dac_applied(value);
+        BoardData d;
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            if (!b.read_dac_readback(d)) return die(b);
+            if (d.dac_readback[c] == expect) {
+                std::printf("DAC %zu = %u written, applied %u (step %u) (not saved to scratchpad: use sp-save)\n", c, value,
+                            d.dac_readback[c], DAC_STEP);
+                return 0;
+            }
+            if (attempt == 0) {
+                std::printf("written; readback %u, waiting for the next board cycle (up to %d s, Ctrl+C is safe)...\n",
+                            d.dac_readback[c], static_cast<int>(BOARD_CYCLE_TIMEOUT_S));
+                std::fflush(stdout);
+                if (!b.wait_next_cycle(BOARD_CYCLE_TIMEOUT_S)) return die(b);
+            }
+        }
+        std::fprintf(stderr, "ERROR: DAC %zu: written %u, expected %u, readback %u%s\n", c, value, expect, d.dac_readback[c],
+                     d.dac_readback[c] == 0 ? " (no analog board on this channel?)" : "");
+        return 1;
     }
+    BoardData d;
+    if (!b.read_settings(d)) return die(b);
+    std::array<uint16_t, NUM_DAC_CHANNELS> v;
+    v.fill(value);
     std::vector<size_t> mm;
     if (!b.write_dac_verified(v, mm)) {
-        std::fprintf(stderr, "ERROR: %s\n", b.last_error().c_str());
+        std::fprintf(stderr, "ERROR: %s (channels of a missing analog board read back 0)\n", b.last_error().c_str());
         for (size_t i : mm) std::fprintf(stderr, "  ch %zu\n", i);
         return 1;
     }
-    std::printf("DAC written and confirmed by readback after the board cycle (not saved to scratchpad: use sp-save)\n");
+    std::printf("DAC all = %u written, applied %u (step %u) (not saved to scratchpad: use sp-save)\n", value,
+                dac_applied(value), DAC_STEP);
     return 0;
 }
 

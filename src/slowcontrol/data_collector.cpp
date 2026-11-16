@@ -125,7 +125,7 @@ BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed
     // DAC: без аналоговой платы обратное чтение всегда 0 — её каналы не сверяем
     // (её отсутствие уже отмечено выше, если она не исключена)
     for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i)
-        if (((use_analog >> analog_board_of_dac(i)) & 1) && now.dac_settings[i] != now.dac_readback[i])
+        if (((use_analog >> analog_board_of_dac(i)) & 1) && dac_applied(now.dac_settings[i]) != now.dac_readback[i])
             h.dac_mismatches.push_back(i);
     if (!h.dac_mismatches.empty())
         h.problems.push_back(std::to_string(h.dac_mismatches.size()) + " DAC channel(s): applied value differs from setpoint");
