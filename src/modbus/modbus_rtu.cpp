@@ -89,7 +89,7 @@ bool ModbusRTU::open() {
         return true;
         
     } catch (const boost::system::system_error& e) {
-        set_error("Failed to open serial port: " + std::string(e.what()));
+        set_error("Failed to open serial port: " + e.code().message());
         serial_port_.reset();
         return false;
     }
@@ -354,7 +354,7 @@ bool ModbusRTU::transact(const std::vector<uint8_t>& request, std::vector<uint8_
         return true;
         
     } catch (const boost::system::system_error& e) {
-        set_error("Transaction error: " + std::string(e.what()));
+        set_error("Transaction error: " + e.code().message());
         update_stats(false, 0.0);
         return false;
     }

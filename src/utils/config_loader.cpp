@@ -282,7 +282,7 @@ SystemConfig ConfigLoader::parse_system_config(const std::string& text, const st
         s.warn_unknown({"poll_interval_sec", "eeprom_check_interval_sec", "modbus_timeout_ms",
                         "response_timeout_ms", "max_retries", "retry_delay_ms", "exclusions_file",
                         "missing_component", "setpoints_file", "setpoints_during_run"});
-        cfg.poll_interval_sec = static_cast<uint32_t>(s.integer("poll_interval_sec", 1, 86400, DEFAULT_POLL_INTERVAL_SEC));
+        cfg.poll_interval_sec = static_cast<uint32_t>(s.integer("poll_interval_sec", MIN_POLL_INTERVAL_SEC, MAX_POLL_INTERVAL_SEC, DEFAULT_POLL_INTERVAL_SEC));
         cfg.eeprom_check_interval_sec = static_cast<uint32_t>(
             s.integer("eeprom_check_interval_sec", 60, 7 * 86400, DEFAULT_EEPROM_CHECK_INTERVAL_SEC));
         cfg.modbus_timeout_ms = static_cast<uint32_t>(s.integer("modbus_timeout_ms", 10, 60000, DEFAULT_MODBUS_TIMEOUT_MS));

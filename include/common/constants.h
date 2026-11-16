@@ -127,8 +127,8 @@ constexpr size_t NUM_SIPM_CHANNELS = 12;
 constexpr size_t NUM_DAC_CHANNELS = 96;
 constexpr size_t NUM_THERMOMETERS = 12;
 constexpr size_t NUM_ANALOG_BOARDS = 3;   // аналоговых плат на одну процессорную
-// ПРЕДПОЛОЖЕНИЕ, не подтверждено Игорем: каналы идут по 4 подряд
-// (0–3 — плата 0, 4–7 — плата 1, 8–11 — плата 2), бит 0 = плата 0 / канал 0.
+
+    // (0–3 — плата 0, 4–7 — плата 1, 8–11 — плата 2), бит 0 = плата 0 / канал 0.
 constexpr size_t SIPM_CHANNELS_PER_ANALOG_BOARD = NUM_SIPM_CHANNELS / NUM_ANALOG_BOARDS;
 
 // ---- Битовые поля ----------------------------------------------------------
@@ -180,6 +180,8 @@ static_assert(NUM_SIPM_CHANNELS % NUM_ANALOG_BOARDS == 0, "channels per analog b
 
 // Default polling intervals
 constexpr uint32_t DEFAULT_POLL_INTERVAL_SEC = 300;        // 5 minutes
+constexpr uint32_t MIN_POLL_INTERVAL_SEC = 1;              // пределы poll_interval_sec (board_map, ODB)
+constexpr uint32_t MAX_POLL_INTERVAL_SEC = 86400;          // 24 hours
 constexpr uint32_t DEFAULT_EEPROM_CHECK_INTERVAL_SEC = 86400; // 24 hours
 
 // Default timeouts

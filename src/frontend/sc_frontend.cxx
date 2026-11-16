@@ -92,6 +92,11 @@ double status_code(BoardStatus s) {
     return 0;
 }
 
+/// Интервал опроса из ODB (int, может быть < 0) в пределах constants (uint32_t)
+bool poll_interval_ok(int s) {
+    return s >= static_cast<int>(MIN_POLL_INTERVAL_SEC) && s <= static_cast<int>(MAX_POLL_INTERVAL_SEC);
+}
+
 std::string join(const std::vector<std::string>& v) {
     std::string out;
     for (const auto& s : v) out += (out.empty() ? "" : "; ") + s;
@@ -174,9 +179,19 @@ public:
 
         fOdbEqSettings->WS("Config file", fConfigFile.c_str(), 256);
         fOdbEqSettings->WS("Exclusions file", fConfig.exclusions_file.c_str(), 256);
-        int interval = static_cast<int>(fConfig.poll_interval_sec);
+        const int file_interval = static_cast<int>(fConfig.poll_interval_sec);
+        int interval = file_interval;
         fOdbEqSettings->RI("Poll interval sec", &interval, true);  // создать, если нет; иначе взять из ODB
-        if (interval < 1) interval = 1;
+        if (!poll_interval_ok(interval)) {
+            fMfe->Msg(MERROR, "HandleInit", "SlowControl: Poll interval sec = %d in ODB is outside %d…%d — "
+                      "using %d s from %s", interval, (int)MIN_POLL_INTERVAL_SEC, (int)MAX_POLL_INTERVAL_SEC, file_interval,
+                      fConfigFile.c_str());
+            interval = file_interval;
+            fOdbEqSettings->WI("Poll interval sec", interval);
+        } else if (interval != file_interval) {
+            fMfe->Msg(MINFO, "HandleInit", "SlowControl: poll interval %d s from ODB (%s: %d s — used only to "
+                      "create the ODB key)", interval, fConfigFile.c_str(), file_interval);
+        }
         fLastInterval = interval;
         fOdbEqSettings->WB("Poll now", false);
         WriteNames();
@@ -234,6 +249,7 @@ private:
 
     // Ручные исключения: имя платы -> текущее значение и каталог ODB с его настройками
     ExclusionMap fExcl;
+    ExclusionMap fExclOther;
     std::map<std::string, MVOdb*> fOdbExcl;  // Settings/Boards/<имя> — исключения, уставки, команды
 
     // Уставки: имя платы -> желаемое (ODB), состояние команды
@@ -246,6 +262,7 @@ private:
         bool alarm = false;
     };
     std::map<std::string, SpState> fSp;
+    SetpointsMap fSpOther;
     struct Done {
         std::string name;
         BoardCommand::Type type;
@@ -300,9 +317,11 @@ private:
                           e.changed.empty() ? "-" : e.changed.c_str());
         }
         for (const auto& [name, e] : file)
-            if (!fExcl.count(name))
-                fMfe->Msg(MERROR, "InitExclusions", "SlowControl: %s: board \"%s\" is not in %s — ignored",
-                          fConfig.exclusions_file.c_str(), name.c_str(), fConfigFile.c_str());
+            if (!fExcl.count(name)) {
+                fExclOther[name] = e;
+                fMfe->Msg(MERROR, "InitExclusions", "SlowControl: %s: board \"%s\" is not in %s — not used, "
+                          "kept in the file", fConfig.exclusions_file.c_str(), name.c_str(), fConfigFile.c_str());
+            }
         if (!fConfig.exclusions_file.empty() && !exists) SaveExclusions();
         return TMFeOk();
     }
@@ -327,7 +346,9 @@ private:
     void SaveExclusions() {
         if (fConfig.exclusions_file.empty()) return;
         try {
-            save_exclusions(fConfig.exclusions_file, fExcl);
+            ExclusionMap all = fExclOther;
+            for (const auto& [name, e] : fExcl) all[name] = e;
+            save_exclusions(fConfig.exclusions_file, all);
         } catch (const std::exception& e) {
             fMfe->Msg(MERROR, "SaveExclusions", "SlowControl: cannot save exclusions: %s", e.what());
             fMfe->TriggerAlarm("SC exclusions file", (std::string("SlowControl: cannot save exclusions: ") + e.what()).c_str(),
@@ -399,9 +420,11 @@ private:
             }
         }
         for (const auto& [name, e] : file)
-            if (!fSp.count(name))
-                fMfe->Msg(MERROR, "InitSetpoints", "SlowControl: %s: board \"%s\" is not in %s — ignored",
-                          fConfig.setpoints_file.c_str(), name.c_str(), fConfigFile.c_str());
+            if (!fSp.count(name)) {
+                fSpOther[name] = e;
+                fMfe->Msg(MERROR, "InitSetpoints", "SlowControl: %s: board \"%s\" is not in %s — not used, "
+                          "kept in the file", fConfig.setpoints_file.c_str(), name.c_str(), fConfigFile.c_str());
+            }
         return TMFeOk();
     }
 
@@ -444,7 +467,7 @@ private:
 
     void SaveSetpoints() {
         if (fConfig.setpoints_file.empty()) return;
-        SetpointsMap m;
+        SetpointsMap m = fSpOther;
         for (const auto& [name, sp] : fSp)
             if (sp.known) m[name] = {sp.want, sp.changed, sp.source};
         try {
@@ -527,10 +550,11 @@ private:
         const bool running = fMfe->fStateRunning;
         for (const auto& [name, o] : fOdbExcl) {
             SpState& sp = fSp[name];
+            MVOdb* const dir = o;
             auto take = [&](const char* key) {
                 bool v = false;
-                o->RB(key, &v, true);
-                if (v) o->WB(key, false);
+                dir->RB(key, &v, true);
+                if (v) dir->WB(key, false);
                 return v;
             };
             if (take("Read from board") && Allowed(name, "Read from board", false)) {
@@ -617,7 +641,11 @@ private:
     void CheckSettings() {
         int interval = fLastInterval;
         fOdbEqSettings->RI("Poll interval sec", &interval);
-        if (interval >= 1 && interval != fLastInterval) {
+        if (interval != fLastInterval && !poll_interval_ok(interval)) {
+            fMfe->Msg(MERROR, "CheckSettings", "SlowControl: Poll interval sec = %d rejected (allowed %d…%d) — "
+                      "ODB restored to %d s", interval, (int)MIN_POLL_INTERVAL_SEC, (int)MAX_POLL_INTERVAL_SEC, fLastInterval);
+            fOdbEqSettings->WI("Poll interval sec", fLastInterval);
+        } else if (interval != fLastInterval) {
             fLastInterval = interval;
             fPoller->set_poll_interval(interval);
             fPoller->poll_now();  // новый период — от следующего цикла
@@ -736,9 +764,10 @@ private:
             o->WS("Last command", sp.last_command.c_str(), 256);
             delete o;
             Alarms(b);
-            SetAlarm(sp.alarm, sp_differs, "SC " + b.config.name + " setpoints",
-                     "SC " + b.config.name + ": board setpoints differ from ODB (" + sp_text
-                         + ") — Apply or Read from board");
+            if (!sp.busy)
+                SetAlarm(sp.alarm, sp_differs, "SC " + b.config.name + " setpoints",
+                         "SC " + b.config.name + ": board setpoints differ from ODB (" + sp_text
+                             + ") — Apply or Read from board");
         }
 
         // ---- статус equipment на странице mhttpd
@@ -757,13 +786,14 @@ private:
     }
 
     void SetAlarm(bool& state, bool now, const std::string& name, const std::string& msg) {
-        if (now && !state) {
+        if (now) {
             // MIDAS пишет TALK-сообщение класса не чаще раза в «System message interval» (60 с),
-            // поэтому каждое срабатывание дублируем в журнал сами
-            fMfe->Msg(MERROR, "Alarms", "%s", msg.c_str());
+            // Первое срабатывание дублируем в журнал
+            if (!state) fMfe->Msg(MERROR, "Alarms", "%s", msg.c_str());
             fMfe->TriggerAlarm(name.c_str(), msg.c_str(), "Alarm");
+        } else if (state) {
+            fMfe->ResetAlarm(name.c_str());
         }
-        else if (!now && state) fMfe->ResetAlarm(name.c_str());
         state = now;
     }
 
@@ -798,6 +828,16 @@ private:
                 fMfe->Msg(MERROR, "Alarms", "SlowControl: board %s was rebooted (update counter restarted)",
                           b.config.name.c_str());
             a.reboots = b.reboots;
+        }
+        if (b.status != a.status) {
+            const bool bad = b.status == BoardStatus::OFFLINE || b.status == BoardStatus::STALE;
+            const std::string why = b.status == BoardStatus::OFFLINE ? " (" + b.last_error + ")" : "";
+            if (bad)
+                fMfe->Msg(MERROR, "Boards", "SlowControl: %s: %s -> %s%s", b.config.name.c_str(), to_string(a.status),
+                          to_string(b.status), why.c_str());
+            else
+                fMfe->Msg(MINFO, "Boards", "SlowControl: %s: %s -> %s", b.config.name.c_str(), to_string(a.status),
+                          to_string(b.status));
         }
         a.status = b.status;
     }
