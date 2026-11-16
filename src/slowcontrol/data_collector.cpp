@@ -97,7 +97,7 @@ BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed
         const uint16_t delta = static_cast<uint16_t>(now.update_counter - prev->update_counter);
         const double max_cycles = elapsed_ms / MIN_BOARD_CYCLE_MS + 10.0;
         // Счётчик стоит недолго (два опроса в одном цикле платы) — ещё не «остановка»
-        h.fresh = delta != 0 || unchanged_ms < STALE_MIN_MS + 3.0 * now.cycle_delay;
+        h.fresh = delta != 0 || unchanged_ms < STALE_MIN_MS + 3.0 * CYCLE_DELAY_UNIT_MS * now.cycle_delay;
         h.rebooted = delta != 0 && delta > max_cycles;
         if (!h.fresh) h.problems.push_back("update counter did not change — board loop stopped (stale data)");
         if (h.rebooted) h.problems.push_back("update counter restarted — board was rebooted");

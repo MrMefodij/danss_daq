@@ -29,9 +29,13 @@ constexpr uint16_t TEMPERATURE_NO_SENSOR = constants::SIPM_TEMP_NO_ACCESS;
 /// Плата 17 при задержке 0 — 134 мс; берём с большим запасом.
 constexpr double MIN_BOARD_CYCLE_MS = 50.0;
 
+/// Единица задержки цикла (holding 99), мс. Измерено на плате 17 16.11.2026:
+/// цикл = 134 мс + задержка × 10 мс (задержка 0, 10, 50, 100 -> 0,134 / 0,234 / 0,632 / 1,13 с).
+constexpr double CYCLE_DELAY_UNIT_MS = 10.0;
+
 /// «Данные не обновляются» — только если счётчик стоит дольше этого (плюс 3 задержки цикла,
-/// holding 99, считая её в мс). Два опроса подряд (например, после команды) могут попасть
-/// в один цикл платы — это не остановка.
+/// holding 99, в единицах CYCLE_DELAY_UNIT_MS). Два опроса подряд (например, после команды)
+/// могут попасть в один цикл платы — это не остановка.
 constexpr double STALE_MIN_MS = 1000.0;
 
 constexpr size_t DAC_CHANNELS_PER_ANALOG_BOARD = constants::NUM_DAC_CHANNELS / constants::NUM_ANALOG_BOARDS;  // 32
