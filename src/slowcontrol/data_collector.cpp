@@ -1,5 +1,6 @@
 #include "slowcontrol/data_collector.h"
 #include "common/constants.h"
+#include "modbus/board_client.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -89,6 +90,11 @@ BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed
     if (h.temperature_errors)
         h.problems.push_back("temperature unreadable on channel(s) "
                              + mask_to_list(h.temperature_errors, NUM_SIPM_CHANNELS));
+    for (size_t ch = 0; ch < NUM_SIPM_CHANNELS; ++ch)
+        if (h.counter_present[ch] && !((ex.counters >> ch) & 1) && !thermometer_id_crc_ok(now.sipm_channels[ch].thermometer_id))
+            h.id_errors |= static_cast<uint16_t>(1u << ch);
+    if (h.id_errors)
+        h.problems.push_back("thermometer ID CRC error on channel(s) " + mask_to_list(h.id_errors, NUM_SIPM_CHANNELS));
 
     // Свежесть и перезагрузка по 16-битному счётчику циклов.
     // Переполнение (65535 -> 0) — нормальный ход: прирост по модулю 2^16 не больше, чем плата

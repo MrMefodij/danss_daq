@@ -7,6 +7,7 @@
 // Без аргументов — только проверки DataCollector.
 
 #include "common/logger.h"
+#include "modbus/board_client.h"
 #include "rs485/board_registry.h"
 #include "slowcontrol/data_collector.h"
 #include "slowcontrol/periodic_poller.h"
@@ -48,7 +49,7 @@ BoardData board_with(uint16_t counter, uint16_t analog_mask, uint16_t counter_ma
     }
     for (size_t ch = 0; ch < constants::NUM_SIPM_CHANNELS; ++ch) {
         const bool c = (counter_mask >> ch) & 1;
-        d.sipm_channels[ch].thermometer_id = c ? "28FF641E83160550" : "0000000000000000";
+        d.sipm_channels[ch].thermometer_id = c ? "28FF1A13BC2202D2" : "0000000000000000";
         d.sipm_channels[ch].temperature = c ? 400 : collector::TEMPERATURE_NO_SENSOR;
     }
     return d;
@@ -61,6 +62,10 @@ void test_units() {
     check(constants::sipm_temperature_c(400) == 25.0, "температура: 400 -> 25 °C");
     check(constants::sipm_temperature_c(0xFFF0) == -1.0, "температура: 0xFFF0 -> -1 °C (знаковая)");
     check(collector::mask_to_list(0b1110110001, 12) == "0, 4, 5, 7-9", "mask_to_list");
+    // ID термометра (стенд, плата 1, канал 0): регистры FF28 131A 22BC D202
+    const uint16_t regs[4] = {0xFF28, 0x131A, 0x22BC, 0xD202};
+    check(format_thermometer_id(regs) == "28FF1A13BC2202D2", "ID термометра: младший байт регистра — первый байт ROM");
+    check(thermometer_id_crc_ok("28FF1A13BC2202D2") && !thermometer_id_crc_ok("28FF1A13BC2202D3"), "CRC8 1-Wire");
 }
 
 void test_collector() {
@@ -93,6 +98,10 @@ void test_collector() {
     terr.sipm_channels[3].temperature = collector::TEMPERATURE_NO_SENSOR;
     h = collector::evaluate(terr, nullptr, 0);
     check(h.temperature_errors == (1u << 3), "ID есть, температура 0x8001 — ошибка температуры на канале 3");
+    BoardData bad = board_with(100, ALL_A, ALL_C);
+    bad.sipm_channels[7].thermometer_id = "28FF1A13BC2202D3";
+    h = collector::evaluate(bad, nullptr, 0);
+    check(h.id_errors == (1u << 7) && !h.ok(), "CRC ID не сходится — ошибка на канале 7");
 
     // DAC: расхождение на подключённой плате 0, исключённая плата 1 не сверяется
     BoardData dac = board_with(100, ALL_A, ALL_C);

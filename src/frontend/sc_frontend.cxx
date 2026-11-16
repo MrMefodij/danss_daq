@@ -137,6 +137,7 @@ std::string describe_missing(const collector::BoardHealth& h) {
     if (h.missing_analog) add("analog boards " + mask_to_list(h.missing_analog, NUM_ANALOG_BOARDS));
     if (h.missing_counters) add("counters " + mask_to_list(h.missing_counters, NUM_SIPM_CHANNELS));
     if (h.temperature_errors) add("temperature unreadable " + mask_to_list(h.temperature_errors, NUM_SIPM_CHANNELS));
+    if (h.id_errors) add("thermometer ID CRC error " + mask_to_list(h.id_errors, NUM_SIPM_CHANNELS));
     return s;
 }
 

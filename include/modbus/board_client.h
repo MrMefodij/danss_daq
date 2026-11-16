@@ -89,6 +89,8 @@ private:
 
 /// 4 регистра ID термометра -> 16 hex-цифр (старшее слово первым)
 std::string format_thermometer_id(const uint16_t* regs);
+/// 16 hex-цифр ROM 1-Wire (семейство, серийный номер, CRC8): CRC8 Dallas сходится
+bool thermometer_id_crc_ok(const std::string& id);
 /// 2 регистра CPU ID -> 8 hex-цифр
 std::string format_cpu_id(const uint16_t* regs);
 

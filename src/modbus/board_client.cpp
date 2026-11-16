@@ -24,9 +24,29 @@ void sleep_ms(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms
 } // namespace
 
 std::string danss::format_thermometer_id(const uint16_t* r) {
+    // В регистре младший байт — первый байт ROM 1-Wire (проверено 16.11.2026 на стенде: при таком
+    // порядке у всех 24 термометров первый байт 0x28 — DS18B20 — и сходится CRC8 в последнем)
     char b[17];
-    std::snprintf(b, sizeof(b), "%04X%04X%04X%04X", r[0], r[1], r[2], r[3]);
+    std::snprintf(b, sizeof(b), "%02X%02X%02X%02X%02X%02X%02X%02X", r[0] & 0xFF, r[0] >> 8, r[1] & 0xFF, r[1] >> 8,
+                  r[2] & 0xFF, r[2] >> 8, r[3] & 0xFF, r[3] >> 8);
     return b;
+}
+
+bool danss::thermometer_id_crc_ok(const std::string& id) {
+    if (id.size() != 16) return false;
+    uint8_t rom[8];
+    for (int i = 0; i < 8; ++i) rom[i] = static_cast<uint8_t>(std::stoul(id.substr(2 * i, 2), nullptr, 16));
+    uint8_t crc = 0;  // Dallas/Maxim CRC8, полином 0x31 (отражённый 0x8C)
+    for (int i = 0; i < 7; ++i) {
+        uint8_t byte = rom[i];
+        for (int k = 0; k < 8; ++k) {
+            const bool mix = (crc ^ byte) & 1;
+            crc >>= 1;
+            if (mix) crc ^= 0x8C;
+            byte >>= 1;
+        }
+    }
+    return crc == rom[7];
 }
 
 std::string danss::format_cpu_id(const uint16_t* r) {
