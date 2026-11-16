@@ -11,6 +11,10 @@
 
 namespace danss {
 
+/// Сколько ждать следующего цикла платы. Без периферии цикл ≈ 134 мс, но со счётчиками на стенде
+/// (16.11.2026) он — секунды: термометры 1-Wire опрашиваются по очереди.
+constexpr double BOARD_CYCLE_TIMEOUT_S = 30.0;
+
 /// @brief Операции с одной процессорной платой по карте регистров v2 (doc/MODBUS_MAP_v2.md).
 ///
 /// Тонкий слой над ModbusRTU: знает адреса регистров, раскладку блоков и процедуры
@@ -55,14 +59,14 @@ public:
     /// Записать уставки DAC, дождаться цикла и сравнить с обратным чтением.
     /// @param mismatches каналы, где применённое значение отличается от записанного
     bool write_dac_verified(const std::array<uint16_t, constants::NUM_DAC_CHANNELS>& values,
-                            std::vector<size_t>& mismatches, double timeout_s = 5.0);
+                            std::vector<size_t>& mismatches, double timeout_s = BOARD_CYCLE_TIMEOUT_S);
 
     // ---- команды CSR (holding 98) и scratchpad ---------------------------------
 
     /// Записать команду в CSR и дождаться статуса. Пока плата пишет во flash, она может
     /// не отвечать — запрос статуса повторяется до timeout_s.
     /// @param status_out прочитанный статус (CSR_STATUS_OK / _UNKNOWN_COMMAND / _ERROR)
-    bool csr_command(uint16_t command, uint16_t& status_out, double timeout_s = 5.0);
+    bool csr_command(uint16_t command, uint16_t& status_out, double timeout_s = BOARD_CYCLE_TIMEOUT_S);
 
     /// Стереть (103) и сохранить (105) текущие значения в scratchpad, затем прочитать
     /// scratchpad и проверить контрольную сумму и совпадение с holding-регистрами.

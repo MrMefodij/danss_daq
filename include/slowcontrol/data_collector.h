@@ -83,8 +83,9 @@ struct BoardHealth {
 /// @param elapsed_ms время между снимками
 /// @param excluded что оператор исключил из проверки
 /// @param unchanged_ms сколько счётчик input 0 уже не меняется (если не менялся с prev)
+/// @param cycle_ms оценка длительности цикла платы (0 — неизвестна): «stale» — не раньше 3 циклов
 BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed_ms,
-                     const Exclusions& excluded = {}, double unchanged_ms = 1e12);
+                     const Exclusions& excluded = {}, double unchanged_ms = 1e12, double cycle_ms = 0);
 
 /// "0, 2, 5-7" — номера установленных битов (для сообщений)
 std::string mask_to_list(uint16_t mask, size_t bits);

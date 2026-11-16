@@ -208,7 +208,7 @@ void PeriodicPoller::execute(Branch& b, BoardCommand& cmd) {
         }
         // Плата применяет уставки (и обновляет обратное чтение DAC) в своём цикле — дождаться
         // его, иначе первый опрос после записи покажет «DAC не применён»
-        client.wait_next_cycle(5.0);
+        client.wait_next_cycle(BOARD_CYCLE_TIMEOUT_S);
         poll_board(b, *bc);  // сразу показать результат в реестре
     }
     const std::string who = bc ? bc->name : "addr " + std::to_string(cmd.address);

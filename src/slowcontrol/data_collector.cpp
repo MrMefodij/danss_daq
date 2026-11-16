@@ -64,7 +64,7 @@ uint16_t BoardHealth::counter_mask() const {
 }
 
 BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed_ms, const Exclusions& ex,
-                     double unchanged_ms) {
+                     double unchanged_ms, double cycle_ms) {
     BoardHealth h;
 
     for (size_t b = 0; b < NUM_ANALOG_BOARDS; ++b) h.analog_present[b] = analog_board_present(now, b);
@@ -103,7 +103,8 @@ BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed
         const uint16_t delta = static_cast<uint16_t>(now.update_counter - prev->update_counter);
         const double max_cycles = elapsed_ms / MIN_BOARD_CYCLE_MS + 10.0;
         // Счётчик стоит недолго (два опроса в одном цикле платы) — ещё не «остановка»
-        h.fresh = delta != 0 || unchanged_ms < STALE_MIN_MS + 3.0 * now.cycle_delay;
+        const double stale_after = std::max(STALE_MIN_MS + 3.0 * now.cycle_delay, 3.0 * cycle_ms);
+        h.fresh = delta != 0 || unchanged_ms < stale_after;
         h.rebooted = delta != 0 && delta > max_cycles;
         if (!h.fresh) h.problems.push_back("update counter did not change — board loop stopped (stale data)");
         if (h.rebooted) h.problems.push_back("update counter restarted — board was rebooted");

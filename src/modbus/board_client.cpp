@@ -200,8 +200,8 @@ bool BoardClient::wait_next_cycle(double timeout_s, double* waited_s) {
         }
         sleep_ms(50);
     }
-    return fail(have ? "update counter did not change within " + std::to_string(timeout_s) + " s (board stuck?)"
-                     : "no answer within " + std::to_string(timeout_s) + " s");
+    const std::string t = std::to_string(static_cast<int>(timeout_s + 0.5));
+    return fail(have ? "update counter did not change within " + t + " s (board stuck?)" : "no answer within " + t + " s");
 }
 
 bool BoardClient::write_dac_verified(const std::array<uint16_t, NUM_DAC_CHANNELS>& values,
@@ -298,7 +298,7 @@ bool BoardClient::assign_address(uint8_t new_address, std::string& report) {
     const auto t0 = std::chrono::steady_clock::now();
     std::vector<uint16_t> v;
     bool moved = false;
-    while (since(t0) < 5.0) {
+    while (since(t0) < BOARD_CYCLE_TIMEOUT_S) {
         if (probe.read_holding(REG_GLOBAL_CSR, 1, v)) {
             moved = true;
             break;

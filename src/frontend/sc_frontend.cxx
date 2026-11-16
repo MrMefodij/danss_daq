@@ -707,6 +707,7 @@ private:
             o->WS("Last error", b.last_error.c_str(), 256);
             o->WI("Reboots", (int)b.reboots);
             o->WI("Failures", (int)b.failures);
+            o->WD("Cycle ms", b.cycle_ms);
             std::vector<double> cur(NUM_SIPM_CHANNELS, NO_DATA), temp(NUM_SIPM_CHANNELS, NO_DATA);
             for (size_t ch = 0; ch < NUM_SIPM_CHANNELS && has; ++ch) {
                 cur[ch] = sipm_current_ua(b.data.sipm_channels[ch].leakage_current);
