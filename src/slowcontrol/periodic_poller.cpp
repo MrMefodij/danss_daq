@@ -197,10 +197,22 @@ void PeriodicPoller::execute(Branch& b, BoardCommand& cmd) {
                 }
                 break;
             }
-            case BoardCommand::Type::SAVE_TO_FLASH:
+            case BoardCommand::Type::SAVE_TO_FLASH: {
+                BoardData d;
+                if (!client.read_settings(d)) {
+                    report = client.last_error();
+                    break;
+                }
+                const auto now = BoardSetpoints::from_board(d);
+                if (now.differs(cmd.setpoints) & ~BoardSetpoints::GAIN_TRIP) {
+                    report = "not saved: board differs from ODB (" + describe_diff(cmd.setpoints, now)
+                             + ") — Apply or Read from board first";
+                    break;
+                }
                 ok = client.save_to_scratchpad(report);  // 103 -> 105 -> проверка scratchpad
                 if (!ok) report = client.last_error();
                 break;
+            }
             case BoardCommand::Type::LOAD_FROM_FLASH:
                 ok = client.load_from_scratchpad();
                 report = ok ? "loaded from scratchpad (101)" : client.last_error();

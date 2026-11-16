@@ -170,6 +170,7 @@ int cmd_watch(BoardClient& b, double seconds) {
     bool have = false;
     int changes = 0, failures = 0;
     double first_change = 0, last_change = 0;
+    uint16_t first_counter = 0;
     while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() < seconds) {
         uint16_t c = 0;
         const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -180,7 +181,10 @@ int cmd_watch(BoardClient& b, double seconds) {
             last = c;
             std::printf("  %6.2f s  counter %u\n", t, c);
         } else if (c != last) {
-            if (changes == 0) first_change = t;
+            if (changes == 0) {
+                first_change = t;
+                first_counter = c;
+            }
             last_change = t;
             ++changes;
             std::printf("  %6.2f s  counter %u (+%u)\n", t, c, static_cast<uint16_t>(c - last));
@@ -188,9 +192,10 @@ int cmd_watch(BoardClient& b, double seconds) {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
-    if (changes >= 2)
-        std::printf("Cycle period ≈ %.3f s (%d changes), read failures: %d\n", (last_change - first_change) / (changes - 1),
-                    changes, failures);
+    const uint16_t cycles = static_cast<uint16_t>(last - first_counter);
+    if (changes >= 2 && cycles > 0)
+        std::printf("Cycle period ≈ %.3f s (%u cycles, %d changes), read failures: %d\n",
+                    (last_change - first_change) / cycles, cycles, changes, failures);
     else
         std::printf("Counter changed %d times — %s, read failures: %d\n", changes,
                     changes == 0 ? "board update loop is NOT running (stale data)" : "period longer than the watch time",

@@ -309,6 +309,10 @@ void test_poller(const std::string& device, const std::string& control) {
     check(b1->data.dac_settings[5] == 777 && b1->data.hv_enable == 0x00F, "реестр сразу видит новые уставки");
     check(wait_for([&] { auto x = reg.get(0, 1); return x->data.dac_readback[5] == 777 || (poller.poll_now(), false); }, 5),
           "обратное чтение DAC 5 = 777 (аналоговая плата 0 подключена)");
+    BoardSetpoints other = sp;
+    other.cycle_delay = static_cast<uint16_t>(sp.cycle_delay + 1);
+    checkr(!cmd(BoardCommand::Type::SAVE_TO_FLASH, 1, other, 0) && res.report.find("not saved") != std::string::npos,
+           "сохранение во flash: плата не совпадает с уставками команды — отказ");
     checkr(cmd(BoardCommand::Type::SAVE_TO_FLASH, 1, sp, 0), "сохранение во flash");
     sp.dac[5] = 100;
     check(cmd(BoardCommand::Type::WRITE_SETPOINTS, 1, sp, BoardSetpoints::DAC), "DAC 5 -> 100");

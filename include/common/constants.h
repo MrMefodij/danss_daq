@@ -180,6 +180,8 @@ static_assert(NUM_SIPM_CHANNELS % NUM_ANALOG_BOARDS == 0, "channels per analog b
 
 // Default polling intervals
 constexpr uint32_t DEFAULT_POLL_INTERVAL_SEC = 300;        // 5 minutes
+constexpr uint32_t MIN_POLL_INTERVAL_SEC = 1;              // пределы poll_interval_sec (board_map, ODB)
+constexpr uint32_t MAX_POLL_INTERVAL_SEC = 86400;          // 24 hours
 constexpr uint32_t DEFAULT_EEPROM_CHECK_INTERVAL_SEC = 86400; // 24 hours
 
 // Default timeouts
