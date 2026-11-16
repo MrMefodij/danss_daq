@@ -82,7 +82,7 @@ class Board:
         self.period = period
         self.counter = 0
         self.holding = [0] * 101
-        self.holding[99] = int(period * 1000)
+        self.holding[99] = int(period * 100)  # задержка цикла в единицах 10 мс (плата 17, 16.11.2026)
         self.holding[0:96] = [100 + i for i in range(96)]
         self.readback = [0] * 96
         self.sp = [0xFFFF] * SP_WORDS
