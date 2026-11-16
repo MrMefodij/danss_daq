@@ -24,9 +24,29 @@ void sleep_ms(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms
 } // namespace
 
 std::string danss::format_thermometer_id(const uint16_t* r) {
+    // В регистре младший байт — первый байт ROM 1-Wire (проверено 16.11.2026 на стенде: при таком
+    // порядке у всех 24 термометров первый байт 0x28 — DS18B20 — и сходится CRC8 в последнем)
     char b[17];
-    std::snprintf(b, sizeof(b), "%04X%04X%04X%04X", r[0], r[1], r[2], r[3]);
+    std::snprintf(b, sizeof(b), "%02X%02X%02X%02X%02X%02X%02X%02X", r[0] & 0xFF, r[0] >> 8, r[1] & 0xFF, r[1] >> 8,
+                  r[2] & 0xFF, r[2] >> 8, r[3] & 0xFF, r[3] >> 8);
     return b;
+}
+
+bool danss::thermometer_id_crc_ok(const std::string& id) {
+    if (id.size() != 16) return false;
+    uint8_t rom[8];
+    for (int i = 0; i < 8; ++i) rom[i] = static_cast<uint8_t>(std::stoul(id.substr(2 * i, 2), nullptr, 16));
+    uint8_t crc = 0;  // Dallas/Maxim CRC8, полином 0x31 (отражённый 0x8C)
+    for (int i = 0; i < 7; ++i) {
+        uint8_t byte = rom[i];
+        for (int k = 0; k < 8; ++k) {
+            const bool mix = (crc ^ byte) & 1;
+            crc >>= 1;
+            if (mix) crc ^= 0x8C;
+            byte >>= 1;
+        }
+    }
+    return crc == rom[7];
 }
 
 std::string danss::format_cpu_id(const uint16_t* r) {
@@ -180,20 +200,29 @@ bool BoardClient::wait_next_cycle(double timeout_s, double* waited_s) {
         }
         sleep_ms(50);
     }
-    return fail(have ? "update counter did not change within " + std::to_string(timeout_s) + " s (board stuck?)"
-                     : "no answer within " + std::to_string(timeout_s) + " s");
+    const std::string t = std::to_string(static_cast<int>(timeout_s + 0.5));
+    return fail(have ? "update counter did not change within " + t + " s (board stuck?)" : "no answer within " + t + " s");
 }
 
 bool BoardClient::write_dac_verified(const std::array<uint16_t, NUM_DAC_CHANNELS>& values,
                                      std::vector<size_t>& mismatches, double timeout_s) {
     mismatches.clear();
     if (!write_all_dac(values)) return false;
-    // Ждём два цикла: запись могла попасть в середину текущего
-    if (!wait_next_cycle(timeout_s) || !wait_next_cycle(timeout_s)) return false;
-    BoardData d;
-    if (!read_dac_readback(d)) return false;
-    for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i)
-        if (d.dac_readback[i] != values[i]) mismatches.push_back(i);
+    auto compare = [&]() {
+        mismatches.clear();
+        BoardData d;
+        if (!read_dac_readback(d)) return false;
+        for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i)
+            if (d.dac_readback[i] != dac_applied(values[i])) mismatches.push_back(i);
+        return true;
+    };
+    // Стенд 16.11.2026: DAC применяется сразу при записи (обратное чтение меняется и при стоящем
+    // цикле платы). Сверяем сразу; не сошлось — ждём цикл (на всякий случай) и сверяем ещё раз
+    if (!compare()) return false;
+    if (!mismatches.empty()) {
+        if (!wait_next_cycle(timeout_s)) return false;
+        if (!compare()) return false;
+    }
     if (!mismatches.empty())
         return fail(std::to_string(mismatches.size()) + " DAC channels: readback differs from written value");
     return true;
@@ -278,7 +307,7 @@ bool BoardClient::assign_address(uint8_t new_address, std::string& report) {
     const auto t0 = std::chrono::steady_clock::now();
     std::vector<uint16_t> v;
     bool moved = false;
-    while (since(t0) < 5.0) {
+    while (since(t0) < BOARD_CYCLE_TIMEOUT_S) {
         if (probe.read_holding(REG_GLOBAL_CSR, 1, v)) {
             moved = true;
             break;

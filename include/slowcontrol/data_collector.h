@@ -66,6 +66,7 @@ struct BoardHealth {
     uint16_t missing_analog = 0;            ///< ожидаются (не исключены), но не видны
     uint16_t missing_counters = 0;          ///< ожидаются (не исключены), но ID = 0
     uint16_t temperature_errors = 0;        ///< счётчик есть, а температура 0x8001
+    uint16_t id_errors = 0;                 ///< ID термометра не нулевой, но CRC8 не сходится
     uint16_t tripped_boards = 0;            ///< биты t из input 1 — подключённые и не исключённые платы
     std::vector<size_t> dac_mismatches;     ///< каналы DAC подключённых и не исключённых плат
     bool fresh = false;                     ///< счётчик input 0 изменился с прошлого опроса
@@ -73,7 +74,7 @@ struct BoardHealth {
     std::vector<std::string> problems;      ///< понятные человеку сообщения (для алармов)
 
     bool ok() const { return problems.empty(); }
-    bool missing() const { return missing_analog || missing_counters || temperature_errors; }
+    bool missing() const { return missing_analog || missing_counters || temperature_errors || id_errors; }
     size_t analog_boards() const;
     size_t counters() const;
     uint16_t analog_mask() const;
@@ -86,8 +87,9 @@ struct BoardHealth {
 /// @param elapsed_ms время между снимками
 /// @param excluded что оператор исключил из проверки
 /// @param unchanged_ms сколько счётчик input 0 уже не меняется (если не менялся с prev)
+/// @param cycle_ms оценка длительности цикла платы (0 — неизвестна): «stale» — не раньше 3 циклов
 BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed_ms,
-                     const Exclusions& excluded = {}, double unchanged_ms = 1e12);
+                     const Exclusions& excluded = {}, double unchanged_ms = 1e12, double cycle_ms = 0);
 
 /// "0, 2, 5-7" — номера установленных битов (для сообщений)
 std::string mask_to_list(uint16_t mask, size_t bits);

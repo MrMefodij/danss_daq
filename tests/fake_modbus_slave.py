@@ -48,6 +48,19 @@ FACTORY = 247
 SP_WORDS = 512
 
 
+def crc8(bs):
+    """CRC8 Dallas/Maxim (1-Wire ROM)"""
+    c = 0
+    for b in bs:
+        for _ in range(8):
+            mix = (c ^ b) & 1
+            c >>= 1
+            if mix:
+                c ^= 0x8C
+            b >>= 1
+    return c
+
+
 def crc(b):
     c = 0xFFFF
     for x in b:
@@ -109,7 +122,8 @@ class Board:
             self.readback = self._readback()
 
     def _readback(self):
-        return [self.holding[i] if self.analog(i // 32) else 0 for i in range(96)]
+        # DAC применяет уставку, округлённую вниз до шага 16 (стенд 16.11.2026: 100 и 104 -> 96)
+        return [self.holding[i] - self.holding[i] % 16 if self.analog(i // 32) else 0 for i in range(96)]
 
     def control(self, cmd, arg):
         with self.lock:
@@ -193,7 +207,11 @@ class Board:
             return 0
         if 100 <= r <= 147:
             t, w = divmod(r - 100, 4)
-            return [0x28FF, 0x641E, 0x8316, 0x0550 + t][w] if self.has_counter(t) else 0
+            if not self.has_counter(t):
+                return 0
+            rom = [0x28, 0xFF, 0x1A, 0x13, 0xBC, 0x22, t]   # DS18B20; t — номер канала
+            rom.append(crc8(rom))
+            return rom[2 * w] | (rom[2 * w + 1] << 8)       # младший байт регистра — первый байт ROM
         if r == 148:
             return 0x1234
         if r == 149:

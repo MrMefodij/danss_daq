@@ -61,7 +61,7 @@ struct BoardData {
     std::vector<size_t> dac_mismatches() const {
         std::vector<size_t> out;
         for (size_t i = 0; i < dac_settings.size(); ++i)
-            if (dac_settings[i] != dac_readback[i]) out.push_back(i);
+            if (constants::dac_applied(dac_settings[i]) != dac_readback[i]) out.push_back(i);
         return out;
     }
 };

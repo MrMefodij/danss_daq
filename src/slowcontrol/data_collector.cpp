@@ -1,5 +1,6 @@
 #include "slowcontrol/data_collector.h"
 #include "common/constants.h"
+#include "modbus/board_client.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -63,7 +64,7 @@ uint16_t BoardHealth::counter_mask() const {
 }
 
 BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed_ms, const Exclusions& ex,
-                     double unchanged_ms) {
+                     double unchanged_ms, double cycle_ms) {
     BoardHealth h;
 
     for (size_t b = 0; b < NUM_ANALOG_BOARDS; ++b) h.analog_present[b] = analog_board_present(now, b);
@@ -89,6 +90,11 @@ BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed
     if (h.temperature_errors)
         h.problems.push_back("temperature unreadable on channel(s) "
                              + mask_to_list(h.temperature_errors, NUM_SIPM_CHANNELS));
+    for (size_t ch = 0; ch < NUM_SIPM_CHANNELS; ++ch)
+        if (h.counter_present[ch] && !((ex.counters >> ch) & 1) && !thermometer_id_crc_ok(now.sipm_channels[ch].thermometer_id))
+            h.id_errors |= static_cast<uint16_t>(1u << ch);
+    if (h.id_errors)
+        h.problems.push_back("thermometer ID CRC error on channel(s) " + mask_to_list(h.id_errors, NUM_SIPM_CHANNELS));
 
     // Свежесть и перезагрузка по 16-битному счётчику циклов.
     // Переполнение (65535 -> 0) — нормальный ход: прирост по модулю 2^16 не больше, чем плата
@@ -97,7 +103,9 @@ BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed
         const uint16_t delta = static_cast<uint16_t>(now.update_counter - prev->update_counter);
         const double max_cycles = elapsed_ms / MIN_BOARD_CYCLE_MS + 10.0;
         // Счётчик стоит недолго (два опроса в одном цикле платы) — ещё не «остановка»
-        h.fresh = delta != 0 || unchanged_ms < STALE_MIN_MS + 3.0 * CYCLE_DELAY_UNIT_MS * now.cycle_delay;
+        const double stale_after =
+            std::max(STALE_MIN_MS + 3.0 * CYCLE_DELAY_UNIT_MS * now.cycle_delay, 3.0 * cycle_ms);
+        h.fresh = delta != 0 || unchanged_ms < stale_after;
         h.rebooted = delta != 0 && delta > max_cycles;
         if (!h.fresh) h.problems.push_back("update counter did not change — board loop stopped (stale data)");
         if (h.rebooted) h.problems.push_back("update counter restarted — board was rebooted");
@@ -118,7 +126,7 @@ BoardHealth evaluate(const BoardData& now, const BoardData* prev, double elapsed
     // DAC: без аналоговой платы обратное чтение всегда 0 — её каналы не сверяем
     // (её отсутствие уже отмечено выше, если она не исключена)
     for (size_t i = 0; i < NUM_DAC_CHANNELS; ++i)
-        if (((use_analog >> analog_board_of_dac(i)) & 1) && now.dac_settings[i] != now.dac_readback[i])
+        if (((use_analog >> analog_board_of_dac(i)) & 1) && dac_applied(now.dac_settings[i]) != now.dac_readback[i])
             h.dac_mismatches.push_back(i);
     if (!h.dac_mismatches.empty())
         h.problems.push_back(std::to_string(h.dac_mismatches.size()) + " DAC channel(s): applied value differs from setpoint");

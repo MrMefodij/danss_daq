@@ -34,6 +34,7 @@ struct BoardState {
     collector::Exclusions excluded;     ///< что оператор исключил из проверки (danss_sc_fe)
     uint64_t last_ok_ms = 0;            ///< время последнего ответа
     uint64_t last_change_ms = 0;        ///< когда счётчик input 0 последний раз изменился
+    double cycle_ms = 0;                ///< оценка цикла платы по росту счётчика (0 — ещё нет)
     uint64_t last_attempt_ms = 0;
     uint32_t consecutive_failures = 0;
     uint64_t polls = 0, failures = 0, reboots = 0;

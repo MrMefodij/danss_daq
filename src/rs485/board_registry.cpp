@@ -58,7 +58,15 @@ BoardState BoardRegistry::update(uint8_t branch_id, uint8_t address, const PollR
         const bool changed = !had || r.data.update_counter != s.data.update_counter;
         if (changed) s.last_change_ms = r.time_ms;
         const double unchanged = static_cast<double>(r.time_ms - s.last_change_ms);
-        s.health = collector::evaluate(r.data, had ? &s.data : nullptr, elapsed, s.excluded, unchanged);
+        s.health = collector::evaluate(r.data, had ? &s.data : nullptr, elapsed, s.excluded, unchanged, s.cycle_ms);
+        // Цикл платы — по росту счётчика между опросами (со счётчиками на стенде — секунды)
+        if (had && s.health.fresh && !s.health.rebooted) {
+            const uint16_t delta = static_cast<uint16_t>(r.data.update_counter - s.data.update_counter);
+            if (delta > 0 && elapsed > 0) {
+                const double est = elapsed / delta;
+                s.cycle_ms = s.cycle_ms > 0 ? 0.7 * s.cycle_ms + 0.3 * est : est;
+            }
+        }
         if (s.health.rebooted) s.reboots++;
         s.data = r.data;
         s.data.board_name = s.config.name;

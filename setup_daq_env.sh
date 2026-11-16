@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Окружение DANSS DAQ / Slow Control на Linux x86_64 — целиком в $HOME, система не меняется.
 #
-#   bash scripts/setup_daq_env.sh [--no-midas] [--no-experiment] [--no-build] [--repo <путь к danss_daq>]
+#   bash setup_daq_env.sh [--no-midas] [--no-experiment] [--no-build] [--repo <путь к danss_daq>]
 #
 # Что делает (каждый шаг пропускается, если уже сделан — скрипт можно запускать повторно):
 #   1. Miniforge в $CONDA_DIR (по умолчанию ~/miniforge3); `conda init` НЕ запускается, .bashrc не трогается.
@@ -42,8 +42,11 @@ while [ $# -gt 0 ]; do
     shift
 done
 if [ -z "$REPO" ]; then
-    here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-    [ -f "$here/CMakeLists.txt" ] && [ -d "$here/src/frontend" ] && REPO="$here"
+    # Репозиторий — каталог скрипта или каталог выше (скрипт в корне или в scripts/)
+    sdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for here in "$sdir" "$(dirname "$sdir")"; do
+        if [ -f "$here/CMakeLists.txt" ] && [ -d "$here/src/frontend" ]; then REPO="$here"; break; fi
+    done
 fi
 
 step() { printf '\n\033[1m=== %s\033[0m\n' "$*"; }
@@ -78,6 +81,26 @@ else
     "$CONDA_DIR/bin/conda" create -y -n "$ENV_NAME" -c conda-forge "${PKGS[@]}"
 fi
 
+# Чужой ROOT в окружении (например, /usr/local/root через thisroot.sh или /etc/profile.d) подмешивает
+# свои библиотеки к ROOT из conda: «class … already in TClassTable», падение cling. Убираем его пути.
+strip_foreign_root() {
+    local v out p
+    for v in PATH LD_LIBRARY_PATH PYTHONPATH CMAKE_PREFIX_PATH ROOT_INCLUDE_PATH CPLUS_INCLUDE_PATH \
+             LIBRARY_PATH MANPATH JUPYTER_PATH CLING_STANDARD_PCH; do
+        out=""
+        IFS=: read -r -a parts <<< "${!v:-}"
+        for p in "${parts[@]}"; do
+            [ -z "$p" ] && continue
+            if [ -n "${ROOTSYS:-}" ] && [ "${ROOTSYS#"$CONDA_DIR"}" = "$ROOTSYS" ] && [ "${p#"$ROOTSYS"}" != "$p" ]; then continue; fi
+            case "$p" in /usr/local/root*|/opt/root*) continue ;; esac
+            out="${out:+$out:}$p"
+        done
+        if [ -n "$out" ]; then export "$v=$out"; else unset "$v"; fi
+    done
+    unset ROOTSYS
+}
+strip_foreign_root
+
 # Активация только в этом скрипте: задаёт CC/CXX/CMAKE_ARGS окружения (sysroot conda,
 # поиск библиотек внутри окружения), PATH к root-config
 set +u
@@ -93,7 +116,16 @@ ENVFILE="$DANSS_BASE/danss_env.sh"
 mkdir -p "$DANSS_BASE/packages" "$DANSS_BASE/online"
 cat > "$ENVFILE" <<EOF
 # DANSS DAQ: окружение для терминала. Подключать: source $ENVFILE
-# Создан scripts/setup_daq_env.sh $(date '+%Y-%m-%d'); правки — здесь.
+# Создан setup_daq_env.sh $(date '+%Y-%m-%d'); правки — здесь.
+# Пути чужого ROOT (/usr/local/root, /opt/root, старый \$ROOTSYS) убираются: два ROOT в одном
+# процессе — «class … already in TClassTable» и падение cling.
+_old=/usr/local/root
+case "\${ROOTSYS:-}" in ""|$CONDA_DIR*) ;; *) _old="\$_old|\$ROOTSYS" ;; esac
+for v in PATH LD_LIBRARY_PATH PYTHONPATH CMAKE_PREFIX_PATH ROOT_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH MANPATH JUPYTER_PATH; do
+    val=\$(printenv "\$v" | tr ':' '\n' | grep -vE "^(\$_old|/opt/root)" | paste -sd: -)
+    if [ -n "\$val" ]; then export "\$v=\$val"; else unset "\$v"; fi
+done
+unset v val _old ROOTSYS CLING_STANDARD_PCH
 source "$CONDA_DIR/bin/activate" "$ENV_NAME"
 export CONDA_PKGS_DIRS=$CONDA_PKGS_DIRS
 export MIDASSYS=$DANSS_BASE/packages/midas
