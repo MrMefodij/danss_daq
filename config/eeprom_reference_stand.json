@@ -1,0 +1,46 @@
+{
+  "description": "Эталон ID термометров и CPU (ID сверены с danss2.db)",
+  "boards": [
+    {
+      "name": "STAND-01",
+      "modbus_address": 1,
+      "branch_id": 0,
+      "thermometer_ids": [
+        "28FF1A13BC2202D2",
+        "28FFB05FBC2202AE",
+        "28FFA309BC22024D",
+        "28FFE03EBC220224",
+        "28FF1447BC2202A6",
+        "28FF540CBC22023B",
+        "28FFAFE8BB2202D0",
+        "28FF0C46BC22026B",
+        "28FFA92ABC220208",
+        "28FF502DBC2202DB",
+        "28FFF32EBC22022E",
+        "28FF9925BC220216"
+      ],
+      "cpu_id": "CC1100CF"
+    },
+    {
+      "name": "STAND-02",
+      "modbus_address": 2,
+      "branch_id": 0,
+      "thermometer_ids": [
+        "28FF0131BC2202A9",
+        "28FFAAF4BB220228",
+        "28FF2437BC22028A",
+        "28FF254EBC22027C",
+        "28FF9568BC22024A",
+        "28FFF02EBC220260",
+        "28FF2A2ABC22028D",
+        "28FF2833BC2202A5",
+        "28FFCC21BC22025F",
+        "28FF0D43BC220227",
+        "28FFF81DBC22029E",
+        "28FF8A44BC22023B"
+      ],
+      "cpu_id": "CC1200CF"
+    }
+  ],
+  "last_updated": "2026-11-16"
+}
